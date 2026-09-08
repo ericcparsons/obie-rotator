@@ -44,6 +44,34 @@ function toHHMM(hour: number, minute: number): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+function formatHour12(hour: number): string {
+  const h = hour % 12 === 0 ? 12 : hour % 12;
+  const ampm = hour < 12 ? "AM" : "PM";
+  return `${h}:00`.replace(":00", ""); // just the hour, minutes added below
+}
+
+// All 15-minute increments across a 24-hour day (96 options)
+const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
+  const hour = Math.floor(i / 4);
+  const minute = (i % 4) * 15;
+  const value = toHHMM(hour, minute);
+  const h = hour % 12 === 0 ? 12 : hour % 12;
+  const mm = String(minute).padStart(2, "0");
+  const ampm = hour < 12 ? "AM" : "PM";
+  const label = `${h}:${mm} ${ampm}`;
+  return optionFor(label, value);
+});
+
+function nearestTimeOption(hour: number, minute: number): typeof TIME_OPTIONS[number] {
+  const target = toHHMM(hour, minute);
+  return (
+    TIME_OPTIONS.find((o) => o.value === target) ??
+    // Round minute down to nearest 15 if no exact match
+    TIME_OPTIONS.find((o) => o.value === toHHMM(hour, Math.floor(minute / 15) * 15)) ??
+    TIME_OPTIONS[0]
+  );
+}
+
 // ── Main menu (ephemeral message) ─────────────────────────────────────────────
 
 export function buildMainMenu() {
@@ -173,7 +201,7 @@ export function buildRotationModal(opts: {
   title: string;
   /** Rotation ID — passed through private_metadata in edit mode */
   rotationId?: number;
-  prefill?: Rotation & { memberIds: string[] };
+  prefill?: Rotation & { memberIds: string[]; ownerIds: string[] };
   /**
    * Cadence to use for field visibility — set by the live cadence_select action.
    * Falls back to prefill?.cadence, then 'weekly'.
@@ -252,6 +280,23 @@ export function buildRotationModal(opts: {
           action_id: "members_select",
           placeholder: { type: "plain_text", text: "Pick team members" },
           initial_users: prefill?.memberIds,
+        },
+      },
+
+      // ── Owners ────────────────────────────────────────────────────
+      {
+        type: "input",
+        block_id: "owners_block",
+        label: { type: "plain_text", text: "Owners" },
+        hint: {
+          type: "plain_text",
+          text: "Owners can edit, delete, and manage this rotation. Only owners can see it.",
+        },
+        element: {
+          type: "multi_users_select",
+          action_id: "owners_select",
+          placeholder: { type: "plain_text", text: "Select owners" },
+          initial_users: prefill?.ownerIds,
         },
       },
 
@@ -335,23 +380,18 @@ export function buildRotationModal(opts: {
       { type: "divider" },
 
       // ── Time ──────────────────────────────────────────────────────
-      // TEMP: plain text input instead of timepicker to allow minute-level precision.
-      // To revert: replace element with { type: 'timepicker', action_id: 'time_picker',
-      //   placeholder: { type: 'plain_text', text: 'Select time' }, initial_time: prefillTime }
-      // and restore the parseModalValues line below.
       {
         type: "input",
         block_id: "time_block",
-        label: { type: "plain_text", text: "Time (24-hour)" },
-        hint: {
-          type: "plain_text",
-          text: "24-hour format, e.g. 09:00 or 14:30",
-        },
+        label: { type: "plain_text", text: "Time" },
         element: {
-          type: "plain_text_input",
+          type: "static_select",
           action_id: "time_picker",
-          placeholder: { type: "plain_text", text: "14:30" },
-          initial_value: prefillTime,
+          options: TIME_OPTIONS,
+          initial_option:
+            prefill != null
+              ? nearestTimeOption(prefill.hour, prefill.minute)
+              : nearestTimeOption(9, 0),
         },
       },
 
@@ -377,6 +417,7 @@ export interface ParsedRotationForm {
   name: string;
   channel: string;
   memberIds: string[];
+  ownerIds: string[];
   cadence: "daily" | "weekly" | "monthly";
   days: number[];
   dayOfMonth: number | null;
@@ -394,6 +435,8 @@ export function parseModalValues(
   const channel: string = values.channel_block.channel_select.selected_channel;
   const memberIds: string[] =
     values.members_block.members_select.selected_users ?? [];
+  const ownerIds: string[] =
+    values.owners_block.owners_select.selected_users ?? [];
   const cadence: "daily" | "weekly" | "monthly" =
     values.cadence_block.cadence_select.selected_option?.value ?? "weekly";
 
@@ -405,8 +448,9 @@ export function parseModalValues(
     values.day_of_month_block?.day_of_month_input?.value ?? null;
   const dayOfMonth = dayOfMonthRaw != null ? parseInt(dayOfMonthRaw, 10) : null;
 
-  // TEMP: reading .value from plain_text_input. To revert: use .selected_time instead.
-  const timeParts = (values.time_block.time_picker.value as string).split(":");
+  const timeParts = (
+    values.time_block.time_picker.selected_option?.value as string
+  ).split(":");
   const hour = parseInt(timeParts[0], 10);
   const minute = parseInt(timeParts[1], 10);
 
@@ -421,6 +465,7 @@ export function parseModalValues(
     name,
     channel,
     memberIds,
+    ownerIds,
     cadence,
     days,
     dayOfMonth,

@@ -10,11 +10,12 @@ export const db = new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode = WAL`);
 db.exec(`PRAGMA foreign_keys = ON`);
 
-// Migration: add message_template column if it doesn't exist (existing DBs)
-try {
-  db.exec(`ALTER TABLE rotations ADD COLUMN message_template TEXT`);
-} catch {
-  // Column already exists — safe to ignore
+// Migrations: add columns introduced after initial schema
+for (const col of [
+  `ALTER TABLE rotations ADD COLUMN message_template TEXT`,
+  `ALTER TABLE rotations ADD COLUMN owners TEXT`,
+]) {
+  try { db.exec(col); } catch { /* already exists */ }
 }
 
 db.exec(`
@@ -35,6 +36,9 @@ db.exec(`
     timezone         TEXT    NOT NULL DEFAULT 'America/New_York',
     -- Handlebars-style template: {{user}} and {{rotation}} are substituted at fire time
     message_template TEXT,
+    -- JSON array of slack_user_ids who can manage this rotation.
+    -- NULL = no restriction (legacy rotations created before owners were added).
+    owners TEXT,
     current_index    INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
   );
@@ -67,6 +71,8 @@ export interface Rotation {
   timezone: string;
   /** null means use DEFAULT_MESSAGE_TEMPLATE */
   message_template: string | null;
+  /** JSON-encoded string[], null = no restriction (legacy) */
+  owners: string | null;
   current_index: number;
   created_at: string;
 }
@@ -88,8 +94,8 @@ export const stmts = {
   rotationByName: db.prepare("SELECT * FROM rotations WHERE name = ?"),
 
   insertRotation: db.prepare(`
-    INSERT INTO rotations (name, channel, cadence, days, day_of_month, hour, minute, timezone, message_template)
-    VALUES (@name, @channel, @cadence, @days, @day_of_month, @hour, @minute, @timezone, @message_template)
+    INSERT INTO rotations (name, channel, cadence, days, day_of_month, hour, minute, timezone, message_template, owners)
+    VALUES (@name, @channel, @cadence, @days, @day_of_month, @hour, @minute, @timezone, @message_template, @owners)
   `),
 
   updateRotation: db.prepare(`
@@ -97,7 +103,7 @@ export const stmts = {
     SET name = @name, channel = @channel, cadence = @cadence,
         days = @days, day_of_month = @day_of_month,
         hour = @hour, minute = @minute, timezone = @timezone,
-        message_template = @message_template
+        message_template = @message_template, owners = @owners
     WHERE id = @id
   `),
 
@@ -164,6 +170,15 @@ export function setMembers(rotationId: number, slackUserIds: string[]): void {
     // Reset index so we start from the top of the new list
     stmts.advanceIndex.run(0, rotationId);
   });
+}
+
+/**
+ * Returns true if userId is an owner of the rotation.
+ * Rotations with null owners (legacy) are visible to everyone.
+ */
+export function isOwner(rotation: Rotation, userId: string): boolean {
+  if (rotation.owners === null) return true;
+  return (JSON.parse(rotation.owners) as string[]).includes(userId);
 }
 
 /**

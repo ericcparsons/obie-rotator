@@ -5,6 +5,7 @@ import {
   getRotation,
   getMembers,
   setMembers,
+  isOwner,
   type Rotation,
   type Member,
   DEFAULT_MESSAGE_TEMPLATE,
@@ -26,6 +27,7 @@ export interface RotationInput {
   minute: number;
   timezone: string;
   messageTemplate: string;
+  ownerIds: string[];
   memberIds: string[];
 }
 
@@ -48,6 +50,7 @@ export function createRotation(input: RotationInput): RotationWithMembers {
     minute: input.minute,
     timezone: input.timezone,
     message_template: input.messageTemplate || null,
+    owners: JSON.stringify(input.ownerIds),
   });
 
   const rotation = getRotation(Number(result.lastInsertRowid));
@@ -73,6 +76,7 @@ export function updateRotation(
     minute: input.minute,
     timezone: input.timezone,
     message_template: input.messageTemplate || null,
+    owners: JSON.stringify(input.ownerIds),
   });
 
   const rotation = getRotation(id);
@@ -89,6 +93,11 @@ export function deleteRotation(id: number): void {
 
 export function listRotationsWithMembers(): RotationWithMembers[] {
   return allRotations().map((r) => ({ ...r, members: getMembers(r.id) }));
+}
+
+/** Returns only rotations the given user owns (or legacy null-owner rotations). */
+export function listRotationsOwnedBy(userId: string): RotationWithMembers[] {
+  return listRotationsWithMembers().filter((r) => isOwner(r, userId));
 }
 
 // ── Schedule helpers ──────────────────────────────────────────────────────────

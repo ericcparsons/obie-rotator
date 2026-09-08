@@ -1,10 +1,11 @@
 import { App, type RespondArguments } from "@slack/bolt";
-import { getRotation, getMembers } from "./db.js";
+import { getRotation, getMembers, isOwner } from "./db.js";
 import {
   createRotation,
   updateRotation,
   deleteRotation,
   listRotationsWithMembers,
+  listRotationsOwnedBy,
   getNextFiringDates,
 } from "./rotations.js";
 import {
@@ -39,6 +40,70 @@ app.command("/rotation", async ({ ack, respond }) => {
     response_type: "ephemeral",
     text: "Obie Rotator",
     blocks: buildMainMenu(),
+  } as RespondArguments);
+});
+
+// ── /rotation-status — show who's up next for this channel (visible to anyone) ─
+
+app.command("/rotation-status", async ({ command, ack, respond }) => {
+  await ack();
+
+  const channelRotations = listRotationsWithMembers().filter(
+    (r) => r.channel === command.channel_id,
+  );
+
+  if (channelRotations.length === 0) {
+    await respond({
+      response_type: "ephemeral",
+      text: "No rotations are configured for this channel.",
+    });
+    return;
+  }
+
+  const dateFmt = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const blocks: any[] = [];
+
+  for (const rotation of channelRotations) {
+    if (rotation.members.length === 0) continue;
+
+    // Rotate so next up is first
+    const startIdx = rotation.current_index % rotation.members.length;
+    const orderedMembers = [
+      ...rotation.members.slice(startIdx),
+      ...rotation.members.slice(0, startIdx),
+    ];
+
+    const firingDates = getNextFiringDates(rotation, orderedMembers.length);
+
+    const queueLines = orderedMembers.map((m, i) => {
+      const date = firingDates[i] ? dateFmt.format(firingDates[i]) : "";
+      const marker = i === 0 ? "→" : "  ";
+      const suffix = i === 0 ? " _(next up)_" : "";
+      return `${marker} ${date} — <@${m.slack_user_id}>${suffix}`;
+    });
+
+    blocks.push(
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${rotation.name}*\n${queueLines.join("\n")}`,
+        },
+      },
+      { type: "divider" },
+    );
+  }
+
+  await respond({
+    response_type: "ephemeral",
+    text: "Rotation status",
+    blocks,
   } as RespondArguments);
 });
 
@@ -87,9 +152,9 @@ app.action("open_create_rotation", async ({ ack, body, client }) => {
 
 // ── Action: list rotations ────────────────────────────────────────────────────
 
-app.action("open_list_rotations", async ({ ack, respond }) => {
+app.action("open_list_rotations", async ({ ack, body, respond }) => {
   await ack();
-  const rotations = listRotationsWithMembers();
+  const rotations = listRotationsOwnedBy(body.user.id);
   await respond({
     response_type: "ephemeral",
     replace_original: true,
@@ -128,7 +193,7 @@ app.action("cadence_select", async ({ ack, body, client }) => {
 
 // ── Action: open edit modal ───────────────────────────────────────────────────
 
-app.action("open_edit_rotation", async ({ ack, body, client }) => {
+app.action("open_edit_rotation", async ({ ack, body, client, respond }) => {
   await ack();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -136,7 +201,13 @@ app.action("open_edit_rotation", async ({ ack, body, client }) => {
   const rotation = getRotation(rotationId);
   if (!rotation) return;
 
+  if (!isOwner(rotation, body.user.id)) {
+    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
+    return;
+  }
+
   const members = getMembers(rotationId);
+  const ownerIds = rotation.owners ? JSON.parse(rotation.owners) as string[] : [];
 
   await client.views.open({
     trigger_id: (body as { trigger_id: string }).trigger_id,
@@ -144,7 +215,7 @@ app.action("open_edit_rotation", async ({ ack, body, client }) => {
       callbackId: "edit_rotation",
       title: "Edit Rotation",
       rotationId,
-      prefill: { ...rotation, memberIds: members.map((m) => m.slack_user_id) },
+      prefill: { ...rotation, memberIds: members.map((m) => m.slack_user_id), ownerIds },
     }),
   });
 });
@@ -162,6 +233,11 @@ app.action("trigger_rotation", async ({ ack, body, respond }) => {
     return;
   }
 
+  if (!isOwner(rotation, body.user.id)) {
+    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
+    return;
+  }
+
   await fireRotation(app, rotation);
 });
 
@@ -174,6 +250,11 @@ app.action("delete_rotation", async ({ ack, body, respond }) => {
   const rotationId = parseInt((body as any).actions[0].value as string, 10);
   const rotation = getRotation(rotationId);
   const name = rotation?.name ?? `#${rotationId}`;
+
+  if (rotation && !isOwner(rotation, body.user.id)) {
+    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
+    return;
+  }
 
   cancelRotation(rotationId);
   deleteRotation(rotationId);
@@ -208,6 +289,9 @@ app.view("create_rotation", async ({ ack, body, view }) => {
 
   await ack();
 
+  // Always include the creator as an owner
+  const ownerIds = Array.from(new Set([body.user.id, ...form.ownerIds]));
+
   const rotation = createRotation({
     name: form.name,
     channel: form.channel,
@@ -218,6 +302,7 @@ app.view("create_rotation", async ({ ack, body, view }) => {
     minute: form.minute,
     timezone: form.timezone,
     messageTemplate: form.messageTemplate,
+    ownerIds,
     memberIds: form.memberIds,
   });
 
@@ -264,6 +349,7 @@ app.view("edit_rotation", async ({ ack, body, view }) => {
     minute: form.minute,
     timezone: form.timezone,
     messageTemplate: form.messageTemplate,
+    ownerIds: form.ownerIds,
     memberIds: form.memberIds,
   });
 
@@ -273,13 +359,18 @@ app.view("edit_rotation", async ({ ack, body, view }) => {
 
 // ── Action: open reorder modal ────────────────────────────────────────────────
 
-app.action("open_reorder_rotation", async ({ ack, body, client }) => {
+app.action("open_reorder_rotation", async ({ ack, body, client, respond }) => {
   await ack();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rotationId = parseInt((body as any).actions[0].value as string, 10);
   const rotation = getRotation(rotationId);
   if (!rotation) return;
+
+  if (!isOwner(rotation, body.user.id)) {
+    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
+    return;
+  }
 
   const rawMembers = getMembers(rotationId);
   if (rawMembers.length === 0) return;
