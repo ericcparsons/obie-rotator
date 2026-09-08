@@ -2,7 +2,9 @@ import cron, { type ScheduledTask } from "node-cron";
 import type { App } from "@slack/bolt";
 import {
   allRotations,
-  popNextMember,
+  getRotation,
+  peekNextMember,
+  advanceMember,
   type Rotation,
   DEFAULT_MESSAGE_TEMPLATE,
 } from "./db.js";
@@ -20,35 +22,49 @@ export async function fireRotation(
   app: App,
   rotation: Rotation,
 ): Promise<void> {
-  const member = popNextMember(rotation.id);
-  if (!member) {
-    console.warn(`[${rotation.name}] No members configured — skipping.`);
+  // Fetch fresh data so the cron closure never uses a stale snapshot
+  const fresh = getRotation(rotation.id);
+  if (!fresh) {
+    console.warn(`[${rotation.name}] Rotation no longer exists — skipping.`);
     return;
   }
 
-  const template = rotation.message_template ?? DEFAULT_MESSAGE_TEMPLATE;
+  // Peek without advancing — index only moves after a successful Slack post
+  const member = peekNextMember(fresh.id);
+  if (!member) {
+    console.warn(`[${fresh.name}] No members configured — skipping.`);
+    return;
+  }
+
+  const template = fresh.message_template ?? DEFAULT_MESSAGE_TEMPLATE;
   const message = template
     .replace(/\{\{user\}\}/g, member.slack_user_id)
-    .replace(/\{\{rotation\}\}/g, rotation.name);
+    .replace(/\{\{rotation\}\}/g, fresh.name);
 
-  await app.client.chat.postMessage({
-    channel: rotation.channel,
-    text: message,
-    blocks: [
-      {
-        type: "section",
-        text: { type: "mrkdwn", text: message },
-      },
-      {
-        type: "context",
-        elements: [
-          { type: "mrkdwn", text: `📅 ${describeSchedule(rotation)}` },
-        ],
-      },
-    ],
-  });
+  try {
+    await app.client.chat.postMessage({
+      channel: fresh.channel,
+      text: message,
+      blocks: [
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: message },
+        },
+        {
+          type: "context",
+          elements: [
+            { type: "mrkdwn", text: `📅 ${describeSchedule(fresh)}` },
+          ],
+        },
+      ],
+    });
 
-  console.log(`[${rotation.name}] Fired — <@${member.slack_user_id}> is up.`);
+    // Only advance after the post succeeds — prevents silent skips on Slack errors
+    advanceMember(fresh.id);
+    console.log(`[${fresh.name}] Fired — <@${member.slack_user_id}> is up.`);
+  } catch (err) {
+    console.error(`[${fresh.name}] Failed to post — index not advanced:`, err);
+  }
 }
 
 // ── Job management ────────────────────────────────────────────────────────────
@@ -72,8 +88,11 @@ export function scheduleRotation(app: App, rotation: Rotation): void {
   const task = cron.schedule(
     expression,
     () => {
-      fireRotation(app, rotation).catch((err) => {
-        console.error(`[${rotation.name}] Error firing rotation:`, err);
+      // Always fetch fresh — fireRotation handles staleness internally
+      const fresh = getRotation(rotation.id);
+      if (!fresh) return;
+      fireRotation(app, fresh).catch((err) => {
+        console.error(`[${rotation.name}] Unhandled error in fireRotation:`, err);
       });
     },
     { timezone: rotation.timezone },

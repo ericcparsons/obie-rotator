@@ -10,14 +10,6 @@ export const db = new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode = WAL`);
 db.exec(`PRAGMA foreign_keys = ON`);
 
-// Migrations: add columns introduced after initial schema
-for (const col of [
-  `ALTER TABLE rotations ADD COLUMN message_template TEXT`,
-  `ALTER TABLE rotations ADD COLUMN owners TEXT`,
-]) {
-  try { db.exec(col); } catch { /* already exists */ }
-}
-
 db.exec(`
   CREATE TABLE IF NOT EXISTS rotations (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +44,21 @@ db.exec(`
     UNIQUE(rotation_id, position)
   );
 `);
+
+// Migrations: add columns introduced after initial schema.
+// Only swallow "duplicate column" errors — anything else is a real problem.
+for (const col of [
+  `ALTER TABLE rotations ADD COLUMN message_template TEXT`,
+  `ALTER TABLE rotations ADD COLUMN owners TEXT`,
+]) {
+  try {
+    db.exec(col);
+  } catch (err) {
+    if (!(err instanceof Error) || !err.message.includes("duplicate column")) {
+      throw err;
+    }
+  }
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -141,10 +148,6 @@ export function getMembers(rotationId: number): Member[] {
   return stmts.membersForRotation.all(rotationId) as unknown as Member[];
 }
 
-/**
- * Replaces the member list for a rotation and resets current_index to 0
- * so the queue starts fresh from position 0.
- */
 // node:sqlite has no transaction() helper — use manual BEGIN/COMMIT/ROLLBACK
 function withTransaction(fn: () => void): void {
   db.exec("BEGIN");
@@ -157,18 +160,25 @@ function withTransaction(fn: () => void): void {
   }
 }
 
-export function setMembers(rotationId: number, slackUserIds: string[]): void {
+/**
+ * Replaces the member list for a rotation.
+ * Pass resetIndex = true (default) to restart the queue from position 0,
+ * or false to preserve the current rotation position (e.g. when only
+ * metadata changed and the member list is the same).
+ */
+export function setMembers(
+  rotationId: number,
+  slackUserIds: string[],
+  resetIndex = true,
+): void {
   withTransaction(() => {
     stmts.deleteMembersForRotation.run(rotationId);
     slackUserIds.forEach((slack_user_id, position) => {
-      stmts.insertMember.run({
-        rotation_id: rotationId,
-        slack_user_id,
-        position,
-      });
+      stmts.insertMember.run({ rotation_id: rotationId, slack_user_id, position });
     });
-    // Reset index so we start from the top of the new list
-    stmts.advanceIndex.run(0, rotationId);
+    if (resetIndex) {
+      stmts.advanceIndex.run(0, rotationId);
+    }
   });
 }
 
@@ -178,7 +188,11 @@ export function setMembers(rotationId: number, slackUserIds: string[]): void {
  */
 export function isOwner(rotation: Rotation, userId: string): boolean {
   if (rotation.owners === null) return true;
-  return (JSON.parse(rotation.owners) as string[]).includes(userId);
+  try {
+    return (JSON.parse(rotation.owners) as string[]).includes(userId);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -204,24 +218,26 @@ export function reorderMembers(
 }
 
 /**
- * Returns the member who is currently "up" and advances the index for next time.
+ * Returns the member who is currently "up" without advancing the index.
+ * Use with advanceMember() so the index only moves after a successful Slack post.
  */
-export function popNextMember(rotationId: number): Member | null {
-  let result: Member | null = null;
+export function peekNextMember(rotationId: number): Member | null {
+  const rotation = getRotation(rotationId);
+  if (!rotation) return null;
+  const members = getMembers(rotationId);
+  if (members.length === 0) return null;
+  return members[rotation.current_index % members.length];
+}
 
-  withTransaction(() => {
-    const rotation = getRotation(rotationId);
-    if (!rotation) return;
-
-    const members = getMembers(rotationId);
-    if (members.length === 0) return;
-
-    const idx = rotation.current_index % members.length;
-    result = members[idx];
-
-    const nextIdx = (idx + 1) % members.length;
-    stmts.advanceIndex.run(nextIdx, rotationId);
-  });
-
-  return result;
+/**
+ * Advances the rotation index to the next member.
+ * Call this only after a successful Slack post.
+ */
+export function advanceMember(rotationId: number): void {
+  const rotation = getRotation(rotationId);
+  if (!rotation) return;
+  const members = getMembers(rotationId);
+  if (members.length === 0) return;
+  const nextIdx = (rotation.current_index + 1) % members.length;
+  stmts.advanceIndex.run(nextIdx, rotationId);
 }

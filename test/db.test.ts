@@ -6,7 +6,8 @@ import {
   getMembers,
   setMembers,
   reorderMembers,
-  popNextMember,
+  peekNextMember,
+  advanceMember,
   isOwner,
   type Rotation,
 } from '../src/db.js';
@@ -113,57 +114,70 @@ describe('setMembers', () => {
   });
 });
 
-// ── popNextMember ─────────────────────────────────────────────────────────────
+// ── peekNextMember + advanceMember ────────────────────────────────────────────
 
-describe('popNextMember', () => {
+describe('peekNextMember', () => {
   beforeEach(clearAll);
 
   it('returns null for an unknown rotation', () => {
-    expect(popNextMember(99999)).toBeNull();
+    expect(peekNextMember(99999)).toBeNull();
   });
 
   it('returns null when rotation has no members', () => {
     const id = insertRotation();
-    expect(popNextMember(id)).toBeNull();
+    expect(peekNextMember(id)).toBeNull();
   });
 
-  it('returns the first member on first call', () => {
+  it('returns the first member without advancing the index', () => {
     const id = insertRotation();
     setMembers(id, ['U001', 'U002', 'U003']);
-    const member = popNextMember(id);
-    expect(member?.slack_user_id).toBe('U001');
+    expect(peekNextMember(id)?.slack_user_id).toBe('U001');
+    expect(peekNextMember(id)?.slack_user_id).toBe('U001'); // still U001
+    expect(getRotation(id)?.current_index).toBe(0); // index unchanged
   });
 
-  it('advances to next member on subsequent calls', () => {
+  it('reflects the current index after manual advance', () => {
     const id = insertRotation();
     setMembers(id, ['U001', 'U002', 'U003']);
-    popNextMember(id); // U001
-    const second = popNextMember(id);
-    expect(second?.slack_user_id).toBe('U002');
+    advanceMember(id);
+    expect(peekNextMember(id)?.slack_user_id).toBe('U002');
+  });
+});
+
+describe('advanceMember', () => {
+  beforeEach(clearAll);
+
+  it('increments the stored current_index', () => {
+    const id = insertRotation();
+    setMembers(id, ['U001', 'U002', 'U003']);
+    advanceMember(id);
+    expect(getRotation(id)?.current_index).toBe(1);
   });
 
   it('wraps around from last member back to first', () => {
     const id = insertRotation();
     setMembers(id, ['U001', 'U002']);
-    popNextMember(id); // U001 → index becomes 1
-    popNextMember(id); // U002 → index becomes 0
-    const wrapped = popNextMember(id);
-    expect(wrapped?.slack_user_id).toBe('U001');
+    advanceMember(id); // → 1
+    advanceMember(id); // → 0 (wrap)
+    expect(peekNextMember(id)?.slack_user_id).toBe('U001');
   });
 
-  it('works correctly with a single member', () => {
+  it('is a no-op for a rotation with no members', () => {
+    const id = insertRotation();
+    expect(() => advanceMember(id)).not.toThrow();
+  });
+
+  it('is a no-op for an unknown rotation', () => {
+    expect(() => advanceMember(99999)).not.toThrow();
+  });
+
+  it('works correctly with a single member — always stays at 0', () => {
     const id = insertRotation();
     setMembers(id, ['U001']);
-    expect(popNextMember(id)?.slack_user_id).toBe('U001');
-    expect(popNextMember(id)?.slack_user_id).toBe('U001');
-    expect(popNextMember(id)?.slack_user_id).toBe('U001');
-  });
-
-  it('increments the stored current_index after firing', () => {
-    const id = insertRotation();
-    setMembers(id, ['U001', 'U002', 'U003']);
-    popNextMember(id);
-    expect(getRotation(id)?.current_index).toBe(1);
+    advanceMember(id);
+    advanceMember(id);
+    expect(peekNextMember(id)?.slack_user_id).toBe('U001');
+    expect(getRotation(id)?.current_index).toBe(0);
   });
 });
 

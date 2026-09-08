@@ -1,5 +1,5 @@
-import { App, type RespondArguments } from "@slack/bolt";
-import { getRotation, getMembers, isOwner } from "./db.js";
+import { App, type RespondArguments, type BlockButtonAction } from "@slack/bolt";
+import { getRotation, getMembers, isOwner, reorderMembers } from "./db.js";
 import {
   createRotation,
   updateRotation,
@@ -7,6 +7,7 @@ import {
   listRotationsWithMembers,
   listRotationsOwnedBy,
   getNextFiringDates,
+  rotateToCurrentIndex,
 } from "./rotations.js";
 import {
   initScheduler,
@@ -21,7 +22,24 @@ import {
   buildReorderModal,
   parseModalValues,
 } from "./ui.js";
-import { reorderMembers } from "./db.js";
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+function rotationIdFromAction(body: BlockButtonAction): number {
+  return parseInt(body.actions[0].value ?? "", 10);
+}
+
+function validateRotationForm(
+  form: ReturnType<typeof parseModalValues>,
+): Record<string, string> | null {
+  if (form.memberIds.length === 0) {
+    return { members_block: "Add at least one member." };
+  }
+  if (form.cadence === "weekly" && form.days.length === 0) {
+    return { days_block: "Pick at least one day for a weekly rotation." };
+  }
+  return null;
+}
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -72,12 +90,10 @@ app.command("/rotation-status", async ({ command, ack, respond }) => {
   for (const rotation of channelRotations) {
     if (rotation.members.length === 0) continue;
 
-    // Rotate so next up is first
-    const startIdx = rotation.current_index % rotation.members.length;
-    const orderedMembers = [
-      ...rotation.members.slice(startIdx),
-      ...rotation.members.slice(0, startIdx),
-    ];
+    const orderedMembers = rotateToCurrentIndex(
+      rotation.members,
+      rotation.current_index,
+    );
 
     const firingDates = getNextFiringDates(rotation, orderedMembers.length);
 
@@ -185,7 +201,7 @@ app.action("cadence_select", async ({ ack, body, client }) => {
     view: buildRotationModal({
       callbackId,
       title: callbackId === "edit_rotation" ? "Edit Rotation" : "Create Rotation",
-      rotationId: isNaN(rotationId as number) ? undefined : rotationId,
+      rotationId: rotationId != null && Number.isFinite(rotationId) ? rotationId : undefined,
       activeCadence: selectedCadence,
     }),
   });
@@ -196,8 +212,7 @@ app.action("cadence_select", async ({ ack, body, client }) => {
 app.action("open_edit_rotation", async ({ ack, body, client, respond }) => {
   await ack();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rotationId = parseInt((body as any).actions[0].value as string, 10);
+  const rotationId = rotationIdFromAction(body as BlockButtonAction);
   const rotation = getRotation(rotationId);
   if (!rotation) return;
 
@@ -225,8 +240,7 @@ app.action("open_edit_rotation", async ({ ack, body, client, respond }) => {
 app.action("trigger_rotation", async ({ ack, body, respond }) => {
   await ack();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rotationId = parseInt((body as any).actions[0].value as string, 10);
+  const rotationId = rotationIdFromAction(body as BlockButtonAction);
   const rotation = getRotation(rotationId);
   if (!rotation) {
     await respond({ response_type: "ephemeral", text: "Rotation not found." });
@@ -246,8 +260,7 @@ app.action("trigger_rotation", async ({ ack, body, respond }) => {
 app.action("delete_rotation", async ({ ack, body, respond }) => {
   await ack();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rotationId = parseInt((body as any).actions[0].value as string, 10);
+  const rotationId = rotationIdFromAction(body as BlockButtonAction);
   const rotation = getRotation(rotationId);
   const name = rotation?.name ?? `#${rotationId}`;
 
@@ -270,23 +283,11 @@ app.action("delete_rotation", async ({ ack, body, respond }) => {
 
 app.view("create_rotation", async ({ ack, body, view }) => {
   const form = parseModalValues(view.state.values);
-
-  if (form.memberIds.length === 0) {
-    await ack({
-      response_action: "errors",
-      errors: { members_block: "Add at least one member." },
-    });
+  const errors = validateRotationForm(form);
+  if (errors) {
+    await ack({ response_action: "errors", errors });
     return;
   }
-
-  if (form.cadence === "weekly" && form.days.length === 0) {
-    await ack({
-      response_action: "errors",
-      errors: { days_block: "Pick at least one day for a weekly rotation." },
-    });
-    return;
-  }
-
   await ack();
 
   // Always include the creator as an owner
@@ -320,23 +321,11 @@ app.view("create_rotation", async ({ ack, body, view }) => {
 app.view("edit_rotation", async ({ ack, body, view }) => {
   const rotationId = parseInt(view.private_metadata, 10);
   const form = parseModalValues(view.state.values);
-
-  if (form.memberIds.length === 0) {
-    await ack({
-      response_action: "errors",
-      errors: { members_block: "Add at least one member." },
-    });
+  const errors = validateRotationForm(form);
+  if (errors) {
+    await ack({ response_action: "errors", errors });
     return;
   }
-
-  if (form.cadence === "weekly" && form.days.length === 0) {
-    await ack({
-      response_action: "errors",
-      errors: { days_block: "Pick at least one day for a weekly rotation." },
-    });
-    return;
-  }
-
   await ack();
 
   const rotation = updateRotation(rotationId, {
@@ -362,8 +351,7 @@ app.view("edit_rotation", async ({ ack, body, view }) => {
 app.action("open_reorder_rotation", async ({ ack, body, client, respond }) => {
   await ack();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rotationId = parseInt((body as any).actions[0].value as string, 10);
+  const rotationId = rotationIdFromAction(body as BlockButtonAction);
   const rotation = getRotation(rotationId);
   if (!rotation) return;
 
@@ -375,12 +363,8 @@ app.action("open_reorder_rotation", async ({ ack, body, client, respond }) => {
   const rawMembers = getMembers(rotationId);
   if (rawMembers.length === 0) return;
 
-  // Rotate so "next up" is first — Slot #1 in the modal = next to fire
-  const startIdx = rotation.current_index % rawMembers.length;
-  const members = [
-    ...rawMembers.slice(startIdx),
-    ...rawMembers.slice(0, startIdx),
-  ];
+  // Rotate so "next up" is first
+  const members = rotateToCurrentIndex(rawMembers, rotation.current_index);
 
   // Resolve display names for all members (requires users:read scope)
   const nameMap = new Map<string, string>();
@@ -411,30 +395,27 @@ app.action("open_reorder_rotation", async ({ ack, body, client, respond }) => {
 
 // ── View submission: reorder rotation ────────────────────────────────────────
 
-app.view("reorder_rotation", async ({ ack, body, view }) => {
-  await ack();
-
+app.view("reorder_rotation", async ({ ack, view }) => {
   const rotationId = parseInt(view.private_metadata, 10);
-  const rotation = getRotation(rotationId);
-  if (!rotation) return;
-
   const members = getMembers(rotationId);
   const values = view.state.values;
 
   // Read each slot's selected user in slot order
-  const newOrder = members.map((_, i) => {
-    return values[`slot_block_${i}`].slot_user_select
-      .selected_option?.value as string;
-  });
+  const newOrder = members.map((_, i) =>
+    values[`slot_block_${i}`].slot_user_select.selected_option?.value as string,
+  );
 
-  // Validate: no duplicates
+  // Validate before ack so we can return a proper error to the user
   const unique = new Set(newOrder);
   if (unique.size !== newOrder.length) {
-    // Can't show modal errors after ack() without response_action — just skip silently
-    // TODO: pre-validate before ack if needed
+    await ack({
+      response_action: "errors",
+      errors: { slot_block_0: "Each person can only appear once in the queue." },
+    });
     return;
   }
 
+  await ack();
   reorderMembers(rotationId, newOrder);
 });
 

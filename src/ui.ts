@@ -1,6 +1,6 @@
 import type { Rotation, Member } from "./db.js";
 import { DEFAULT_MESSAGE_TEMPLATE } from "./db.js";
-import { describeSchedule } from "./rotations.js";
+import { describeSchedule, rotateToCurrentIndex } from "./rotations.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -42,12 +42,6 @@ function optionFor(label: string, value: string) {
 
 function toHHMM(hour: number, minute: number): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-}
-
-function formatHour12(hour: number): string {
-  const h = hour % 12 === 0 ? 12 : hour % 12;
-  const ampm = hour < 12 ? "AM" : "PM";
-  return `${h}:00`.replace(":00", ""); // just the hour, minutes added below
 }
 
 // All 15-minute increments across a 24-hour day (96 options)
@@ -448,9 +442,9 @@ export function parseModalValues(
     values.day_of_month_block?.day_of_month_input?.value ?? null;
   const dayOfMonth = dayOfMonthRaw != null ? parseInt(dayOfMonthRaw, 10) : null;
 
-  const timeParts = (
-    values.time_block.time_picker.selected_option?.value as string
-  ).split(":");
+  const timeValue =
+    values.time_block.time_picker.selected_option?.value ?? "09:00";
+  const timeParts = (timeValue as string).split(":");
   const hour = parseInt(timeParts[0], 10);
   const minute = parseInt(timeParts[1], 10);
 
@@ -504,21 +498,21 @@ export function buildReorderModal(
     const dateLabel =
       firingDates[i] != null ? ` — ${DATE_FMT.format(firingDates[i])}` : "";
     return {
-    type: "input",
-    block_id: `slot_block_${i}`,
-    label: { type: "plain_text" as const, text: `Position ${i + 1}${dateLabel}` },
-    element: {
-      type: "static_select" as const,
-      action_id: "slot_user_select",
-      options: members.map((m) =>
-        optionFor(displayName(m.slack_user_id), m.slack_user_id),
-      ),
-      initial_option: optionFor(
-        displayName(member.slack_user_id),
-        member.slack_user_id,
-      ),
-    },
-  };
+      type: "input",
+      block_id: `slot_block_${i}`,
+      label: { type: "plain_text" as const, text: `Position ${i + 1}${dateLabel}` },
+      element: {
+        type: "static_select" as const,
+        action_id: "slot_user_select",
+        options: members.map((m) =>
+          optionFor(displayName(m.slack_user_id), m.slack_user_id),
+        ),
+        initial_option: optionFor(
+          displayName(member.slack_user_id),
+          member.slack_user_id,
+        ),
+      },
+    };
   });
 
   return {

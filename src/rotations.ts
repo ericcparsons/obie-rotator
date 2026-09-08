@@ -11,6 +11,16 @@ import {
   DEFAULT_MESSAGE_TEMPLATE,
 } from "./db.js";
 
+/**
+ * Rotates an array so the item at currentIndex comes first.
+ * Used to display queues "next up first" in the UI.
+ */
+export function rotateToCurrentIndex<T>(items: T[], currentIndex: number): T[] {
+  if (items.length === 0) return items;
+  const idx = currentIndex % items.length;
+  return [...items.slice(idx), ...items.slice(0, idx)];
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type Cadence = "daily" | "weekly" | "monthly";
@@ -49,7 +59,7 @@ export function createRotation(input: RotationInput): RotationWithMembers {
     hour: input.hour,
     minute: input.minute,
     timezone: input.timezone,
-    message_template: input.messageTemplate || null,
+    message_template: input.messageTemplate ?? null,
     owners: JSON.stringify(input.ownerIds),
   });
 
@@ -75,14 +85,19 @@ export function updateRotation(
     hour: input.hour,
     minute: input.minute,
     timezone: input.timezone,
-    message_template: input.messageTemplate || null,
+    message_template: input.messageTemplate ?? null,
     owners: JSON.stringify(input.ownerIds),
   });
 
   const rotation = getRotation(id);
   if (!rotation) throw new Error(`Rotation ${id} not found`);
 
-  setMembers(rotation.id, input.memberIds);
+  // Only reset current_index if the member list actually changed.
+  // Editing just the schedule or message template should not bump the queue.
+  const oldMemberIds = getMembers(id).map((m) => m.slack_user_id);
+  const membersChanged =
+    JSON.stringify(oldMemberIds) !== JSON.stringify(input.memberIds);
+  setMembers(rotation.id, input.memberIds, membersChanged);
 
   return { ...rotation, members: getMembers(rotation.id) };
 }

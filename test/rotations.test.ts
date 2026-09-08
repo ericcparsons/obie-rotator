@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildCronExpression, describeSchedule, getNextFiringDates } from '../src/rotations.js';
+import { buildCronExpression, describeSchedule, getNextFiringDates, rotateToCurrentIndex } from '../src/rotations.js';
 import type { Rotation } from '../src/db.js';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -142,5 +142,30 @@ describe('getNextFiringDates', () => {
 
   it('returns 0 dates when count is 0', () => {
     expect(getNextFiringDates(rotation({ cadence: 'daily' }), 0)).toHaveLength(0);
+  });
+});
+
+// ── rotateToCurrentIndex ──────────────────────────────────────────────────────
+
+describe('rotateToCurrentIndex', () => {
+  it('rotates so the item at currentIndex is first', () => {
+    expect(rotateToCurrentIndex(['a', 'b', 'c'], 1)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('currentIndex = 0 returns the same order', () => {
+    expect(rotateToCurrentIndex(['a', 'b', 'c'], 0)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('wraps currentIndex that exceeds array length', () => {
+    expect(rotateToCurrentIndex(['a', 'b', 'c'], 4)).toEqual(['b', 'c', 'a']); // 4 % 3 = 1
+  });
+
+  it('returns an empty array unchanged', () => {
+    expect(rotateToCurrentIndex([], 5)).toEqual([]);
+  });
+
+  it('works with a single element', () => {
+    expect(rotateToCurrentIndex(['a'], 0)).toEqual(['a']);
+    expect(rotateToCurrentIndex(['a'], 99)).toEqual(['a']);
   });
 });
