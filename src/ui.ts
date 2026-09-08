@@ -1,0 +1,394 @@
+import type { Rotation } from "./db.js";
+import type { Member } from "./db.js";
+import { describeSchedule } from "./rotations.js";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+export const TIMEZONES = [
+  { label: "UTC", value: "UTC" },
+  { label: "ET — New York (UTC−5/−4)", value: "America/New_York" },
+  { label: "CT — Chicago (UTC−6/−5)", value: "America/Chicago" },
+  { label: "MT — Denver (UTC−7/−6)", value: "America/Denver" },
+  { label: "AZ — Phoenix (UTC−7, no DST)", value: "America/Phoenix" },
+  { label: "PT — Los Angeles (UTC−8/−7)", value: "America/Los_Angeles" },
+  { label: "GMT — London (UTC+0/+1)", value: "Europe/London" },
+  { label: "CET — Amsterdam/Paris", value: "Europe/Amsterdam" },
+  { label: "IST — India (UTC+5:30)", value: "Asia/Kolkata" },
+  { label: "JST — Tokyo (UTC+9)", value: "Asia/Tokyo" },
+  { label: "AEST — Sydney (UTC+10/+11)", value: "Australia/Sydney" },
+];
+
+export const CADENCES = [
+  { label: "Daily", value: "daily" },
+  { label: "Weekly", value: "weekly" },
+  { label: "Monthly", value: "monthly" },
+];
+
+export const DAYS_OF_WEEK = [
+  { label: "Monday", value: "1" },
+  { label: "Tuesday", value: "2" },
+  { label: "Wednesday", value: "3" },
+  { label: "Thursday", value: "4" },
+  { label: "Friday", value: "5" },
+  { label: "Saturday", value: "6" },
+  { label: "Sunday", value: "0" },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function optionFor(label: string, value: string) {
+  return { text: { type: "plain_text" as const, text: label }, value };
+}
+
+function toHHMM(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+// ── Main menu (ephemeral message) ─────────────────────────────────────────────
+
+export function buildMainMenu() {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "*Obie Rotator* — manage your team rotations.",
+      },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "➕ Create rotation" },
+          action_id: "open_create_rotation",
+          style: "primary",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "📋 List rotations" },
+          action_id: "open_list_rotations",
+        },
+      ],
+    },
+  ];
+}
+
+// ── Rotation list (ephemeral message) ─────────────────────────────────────────
+
+export function buildRotationList(
+  rotations: Array<Rotation & { members: Member[] }>,
+) {
+  if (rotations.length === 0) {
+    return [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: "No rotations yet. Click *➕ Create rotation* to add one.",
+        },
+      },
+    ];
+  }
+
+  const blocks: unknown[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: "Active Rotations" },
+    },
+  ];
+
+  for (const rotation of rotations) {
+    const currentMember =
+      rotation.members[rotation.current_index % rotation.members.length];
+
+    blocks.push(
+      { type: "divider" },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: [
+            `*${rotation.name}*`,
+            `📅 ${describeSchedule(rotation)}`,
+            `👥 ${rotation.members.length} member(s) — next up: ${currentMember ? `<@${currentMember.slack_user_id}>` : "_none_"}`,
+            `📢 <#${rotation.channel}>`,
+          ].join("\n"),
+        },
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "▶ Trigger now" },
+            action_id: "trigger_rotation",
+            value: String(rotation.id),
+          },
+          {
+            type: "button",
+            text: { type: "plain_text", text: "✏ Edit" },
+            action_id: "open_edit_rotation",
+            value: String(rotation.id),
+          },
+          {
+            type: "button",
+            text: { type: "plain_text", text: "🗑 Delete" },
+            action_id: "delete_rotation",
+            value: String(rotation.id),
+            style: "danger",
+            confirm: {
+              title: { type: "plain_text", text: "Delete rotation?" },
+              text: {
+                type: "mrkdwn",
+                text: `This will permanently delete *${rotation.name}* and stop all scheduled posts.`,
+              },
+              confirm: { type: "plain_text", text: "Delete" },
+              deny: { type: "plain_text", text: "Cancel" },
+              style: "danger",
+            },
+          },
+        ],
+      },
+    );
+  }
+
+  return blocks;
+}
+
+// ── Create / Edit modal ───────────────────────────────────────────────────────
+
+/**
+ * Builds the modal payload for creating or editing a rotation.
+ * When `prefill` is provided the fields are pre-populated (edit mode).
+ */
+export function buildRotationModal(opts: {
+  callbackId: "create_rotation" | "edit_rotation";
+  title: string;
+  /** Rotation ID — passed through private_metadata in edit mode */
+  rotationId?: number;
+  prefill?: Rotation & { memberIds: string[] };
+}) {
+  const { callbackId, title, rotationId, prefill } = opts;
+
+  const cadenceOptions = CADENCES.map((c) => optionFor(c.label, c.value));
+  const timezoneOptions = TIMEZONES.map((tz) => optionFor(tz.label, tz.value));
+  const dayOptions = DAYS_OF_WEEK.map((d) => optionFor(d.label, d.value));
+
+  // Pre-fill helpers
+  const prefillCadence = cadenceOptions.find(
+    (o) => o.value === (prefill?.cadence ?? "weekly"),
+  );
+  const prefillDays = prefill?.days
+    ? (JSON.parse(prefill.days) as number[])
+        .map((d) => dayOptions.find((o) => o.value === String(d)))
+        .filter(Boolean)
+    : undefined;
+  const prefillTimezone = timezoneOptions.find(
+    (o) => o.value === (prefill?.timezone ?? "America/New_York"),
+  );
+  const prefillTime =
+    prefill != null ? toHHMM(prefill.hour, prefill.minute) : undefined;
+
+  return {
+    type: "modal" as const,
+    callback_id: callbackId,
+    private_metadata: rotationId != null ? String(rotationId) : "",
+    title: { type: "plain_text" as const, text: title },
+    submit: { type: "plain_text" as const, text: "Save" },
+    close: { type: "plain_text" as const, text: "Cancel" },
+    blocks: [
+      // ── Name ──────────────────────────────────────────────────────
+      {
+        type: "input",
+        block_id: "name_block",
+        label: { type: "plain_text", text: "Rotation name" },
+        element: {
+          type: "plain_text_input",
+          action_id: "name_input",
+          placeholder: { type: "plain_text", text: "e.g. Prism New Issues" },
+          initial_value: prefill?.name,
+        },
+      },
+
+      // ── Channel ───────────────────────────────────────────────────
+      {
+        type: "input",
+        block_id: "channel_block",
+        label: { type: "plain_text", text: "Post to channel" },
+        element: {
+          type: "channels_select",
+          action_id: "channel_select",
+          placeholder: { type: "plain_text", text: "Select a channel" },
+          initial_channel: prefill?.channel,
+        },
+      },
+
+      // ── Members ───────────────────────────────────────────────────
+      {
+        type: "input",
+        block_id: "members_block",
+        label: { type: "plain_text", text: "Queue members (in order)" },
+        hint: {
+          type: "plain_text",
+          text: "The order you select them here is the rotation order.",
+        },
+        element: {
+          type: "multi_users_select",
+          action_id: "members_select",
+          placeholder: { type: "plain_text", text: "Pick team members" },
+          initial_users: prefill?.memberIds,
+        },
+      },
+
+      { type: "divider" },
+
+      // ── Cadence ───────────────────────────────────────────────────
+      {
+        type: "input",
+        block_id: "cadence_block",
+        label: { type: "plain_text", text: "Cadence" },
+        element: {
+          type: "static_select",
+          action_id: "cadence_select",
+          options: cadenceOptions,
+          initial_option: prefillCadence ?? cadenceOptions[1], // default weekly
+        },
+      },
+
+      // ── Days of week (shown for weekly) ───────────────────────────
+      {
+        type: "input",
+        block_id: "days_block",
+        label: { type: "plain_text", text: "Days of week" },
+        hint: {
+          type: "plain_text",
+          text: "For weekly rotations only — ignored otherwise.",
+        },
+        optional: true,
+        element: {
+          type: "checkboxes",
+          action_id: "days_checkboxes",
+          options: dayOptions,
+          ...(prefillDays && prefillDays.length > 0
+            ? { initial_options: prefillDays }
+            : {}),
+        },
+      },
+
+      // ── Day of month (shown for monthly) ──────────────────────────
+      {
+        type: "input",
+        block_id: "day_of_month_block",
+        label: { type: "plain_text", text: "Day of month" },
+        hint: {
+          type: "plain_text",
+          text: "For monthly rotations only (1–28) — ignored otherwise.",
+        },
+        optional: true,
+        element: {
+          type: "number_input",
+          action_id: "day_of_month_input",
+          is_decimal_allowed: false,
+          min_value: "1",
+          max_value: "28",
+          initial_value:
+            prefill?.day_of_month != null
+              ? String(prefill.day_of_month)
+              : undefined,
+        },
+      },
+
+      { type: "divider" },
+
+      // ── Time ──────────────────────────────────────────────────────
+      // TEMP: plain text input instead of timepicker to allow minute-level precision.
+      // To revert: replace element with { type: 'timepicker', action_id: 'time_picker',
+      //   placeholder: { type: 'plain_text', text: 'Select time' }, initial_time: prefillTime }
+      // and restore the parseModalValues line below.
+      {
+        type: "input",
+        block_id: "time_block",
+        label: { type: "plain_text", text: "Time (24-hour)" },
+        hint: {
+          type: "plain_text",
+          text: "24-hour format, e.g. 09:00 or 14:30",
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "time_picker",
+          placeholder: { type: "plain_text", text: "14:30" },
+          initial_value: prefillTime,
+        },
+      },
+
+      // ── Timezone ──────────────────────────────────────────────────
+      {
+        type: "input",
+        block_id: "timezone_block",
+        label: { type: "plain_text", text: "Timezone" },
+        element: {
+          type: "static_select",
+          action_id: "timezone_select",
+          options: timezoneOptions,
+          initial_option: prefillTimezone ?? timezoneOptions[1], // default ET
+        },
+      },
+    ],
+  };
+}
+
+// ── Parse modal submission values ─────────────────────────────────────────────
+
+export interface ParsedRotationForm {
+  name: string;
+  channel: string;
+  memberIds: string[];
+  cadence: "daily" | "weekly" | "monthly";
+  days: number[];
+  dayOfMonth: number | null;
+  hour: number;
+  minute: number;
+  timezone: string;
+}
+
+export function parseModalValues(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  values: Record<string, Record<string, any>>,
+): ParsedRotationForm {
+  const name: string = values.name_block.name_input.value;
+  const channel: string = values.channel_block.channel_select.selected_channel;
+  const memberIds: string[] =
+    values.members_block.members_select.selected_users ?? [];
+  const cadence: "daily" | "weekly" | "monthly" =
+    values.cadence_block.cadence_select.selected_option?.value ?? "weekly";
+
+  const selectedDays: Array<{ value: string }> =
+    values.days_block.days_checkboxes.selected_options ?? [];
+  const days = selectedDays.map((o) => parseInt(o.value, 10));
+
+  const dayOfMonthRaw: string | null =
+    values.day_of_month_block.day_of_month_input.value ?? null;
+  const dayOfMonth = dayOfMonthRaw != null ? parseInt(dayOfMonthRaw, 10) : null;
+
+  // TEMP: reading .value from plain_text_input. To revert: use .selected_time instead.
+  const timeParts = (values.time_block.time_picker.value as string).split(":");
+  const hour = parseInt(timeParts[0], 10);
+  const minute = parseInt(timeParts[1], 10);
+
+  const timezone: string =
+    values.timezone_block.timezone_select.selected_option?.value ??
+    "America/New_York";
+
+  return {
+    name,
+    channel,
+    memberIds,
+    cadence,
+    days,
+    dayOfMonth,
+    hour,
+    minute,
+    timezone,
+  };
+}
