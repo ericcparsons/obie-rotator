@@ -1,3 +1,4 @@
+import { CronExpressionParser } from "cron-parser";
 import {
   stmts,
   allRotations,
@@ -6,6 +7,7 @@ import {
   setMembers,
   type Rotation,
   type Member,
+  DEFAULT_MESSAGE_TEMPLATE,
 } from "./db.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -23,8 +25,11 @@ export interface RotationInput {
   hour: number;
   minute: number;
   timezone: string;
+  messageTemplate: string;
   memberIds: string[];
 }
+
+export { DEFAULT_MESSAGE_TEMPLATE };
 
 export interface RotationWithMembers extends Rotation {
   members: Member[];
@@ -42,6 +47,7 @@ export function createRotation(input: RotationInput): RotationWithMembers {
     hour: input.hour,
     minute: input.minute,
     timezone: input.timezone,
+    message_template: input.messageTemplate || null,
   });
 
   const rotation = getRotation(Number(result.lastInsertRowid));
@@ -66,6 +72,7 @@ export function updateRotation(
     hour: input.hour,
     minute: input.minute,
     timezone: input.timezone,
+    message_template: input.messageTemplate || null,
   });
 
   const rotation = getRotation(id);
@@ -106,6 +113,22 @@ export function buildCronExpression(rotation: Rotation): string {
 
     case "monthly":
       return `${minute} ${hour} ${day_of_month ?? 1} * *`;
+  }
+}
+
+/**
+ * Returns the next `count` firing dates for a rotation, in order.
+ * Uses the rotation's own timezone so DST is handled correctly.
+ */
+export function getNextFiringDates(rotation: Rotation, count: number): Date[] {
+  try {
+    const expression = buildCronExpression(rotation);
+    const interval = CronExpressionParser.parse(expression, {
+      tz: rotation.timezone,
+    });
+    return Array.from({ length: count }, () => interval.next().toDate());
+  } catch {
+    return [];
   }
 }
 

@@ -10,24 +10,33 @@ export const db = new DatabaseSync(dbPath);
 db.exec(`PRAGMA journal_mode = WAL`);
 db.exec(`PRAGMA foreign_keys = ON`);
 
+// Migration: add message_template column if it doesn't exist (existing DBs)
+try {
+  db.exec(`ALTER TABLE rotations ADD COLUMN message_template TEXT`);
+} catch {
+  // Column already exists — safe to ignore
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS rotations (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT    NOT NULL UNIQUE,
-    channel       TEXT    NOT NULL,
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT    NOT NULL UNIQUE,
+    channel          TEXT    NOT NULL,
     -- 'daily' | 'weekly' | 'monthly'
-    cadence       TEXT    NOT NULL DEFAULT 'weekly',
+    cadence          TEXT    NOT NULL DEFAULT 'weekly',
     -- JSON array of day numbers (0=Sun … 6=Sat), only for weekly
-    days          TEXT,
+    days             TEXT,
     -- 1–31, only for monthly
-    day_of_month  INTEGER,
+    day_of_month     INTEGER,
     -- wall-clock time in the rotation's own timezone
-    hour          INTEGER NOT NULL DEFAULT 9,
-    minute        INTEGER NOT NULL DEFAULT 0,
+    hour             INTEGER NOT NULL DEFAULT 9,
+    minute           INTEGER NOT NULL DEFAULT 0,
     -- IANA timezone name, e.g. "America/New_York"
-    timezone      TEXT    NOT NULL DEFAULT 'America/New_York',
-    current_index INTEGER NOT NULL DEFAULT 0,
-    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    timezone         TEXT    NOT NULL DEFAULT 'America/New_York',
+    -- Handlebars-style template: {{user}} and {{rotation}} are substituted at fire time
+    message_template TEXT,
+    current_index    INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS members (
@@ -42,6 +51,9 @@ db.exec(`
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export const DEFAULT_MESSAGE_TEMPLATE =
+  "*{{rotation}}*\n<@{{user}}> you're up! 🔄";
+
 export interface Rotation {
   id: number;
   name: string;
@@ -53,6 +65,8 @@ export interface Rotation {
   hour: number;
   minute: number;
   timezone: string;
+  /** null means use DEFAULT_MESSAGE_TEMPLATE */
+  message_template: string | null;
   current_index: number;
   created_at: string;
 }
@@ -74,15 +88,16 @@ export const stmts = {
   rotationByName: db.prepare("SELECT * FROM rotations WHERE name = ?"),
 
   insertRotation: db.prepare(`
-    INSERT INTO rotations (name, channel, cadence, days, day_of_month, hour, minute, timezone)
-    VALUES (@name, @channel, @cadence, @days, @day_of_month, @hour, @minute, @timezone)
+    INSERT INTO rotations (name, channel, cadence, days, day_of_month, hour, minute, timezone, message_template)
+    VALUES (@name, @channel, @cadence, @days, @day_of_month, @hour, @minute, @timezone, @message_template)
   `),
 
   updateRotation: db.prepare(`
     UPDATE rotations
     SET name = @name, channel = @channel, cadence = @cadence,
         days = @days, day_of_month = @day_of_month,
-        hour = @hour, minute = @minute, timezone = @timezone
+        hour = @hour, minute = @minute, timezone = @timezone,
+        message_template = @message_template
     WHERE id = @id
   `),
 
@@ -147,6 +162,28 @@ export function setMembers(rotationId: number, slackUserIds: string[]): void {
       });
     });
     // Reset index so we start from the top of the new list
+    stmts.advanceIndex.run(0, rotationId);
+  });
+}
+
+/**
+ * Reorders the queue without resetting current_index — the "next up" person
+ * follows their new position so the rotation continues smoothly.
+ */
+export function reorderMembers(
+  rotationId: number,
+  orderedUserIds: string[],
+): void {
+  withTransaction(() => {
+    const rotation = getRotation(rotationId);
+    if (!rotation) return;
+
+    stmts.deleteMembersForRotation.run(rotationId);
+    orderedUserIds.forEach((slack_user_id, position) => {
+      stmts.insertMember.run({ rotation_id: rotationId, slack_user_id, position });
+    });
+
+    // After reorder, slot #1 is always "next up"
     stmts.advanceIndex.run(0, rotationId);
   });
 }

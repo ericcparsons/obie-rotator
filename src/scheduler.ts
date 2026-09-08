@@ -1,6 +1,11 @@
 import cron, { type ScheduledTask } from "node-cron";
 import type { App } from "@slack/bolt";
-import { allRotations, popNextMember, type Rotation } from "./db.js";
+import {
+  allRotations,
+  popNextMember,
+  type Rotation,
+  DEFAULT_MESSAGE_TEMPLATE,
+} from "./db.js";
 import { buildCronExpression, describeSchedule } from "./rotations.js";
 
 // Keyed by rotation ID so we can cancel/replace individual jobs
@@ -21,24 +26,23 @@ export async function fireRotation(
     return;
   }
 
+  const template = rotation.message_template ?? DEFAULT_MESSAGE_TEMPLATE;
+  const message = template
+    .replace(/\{\{user\}\}/g, member.slack_user_id)
+    .replace(/\{\{rotation\}\}/g, rotation.name);
+
   await app.client.chat.postMessage({
     channel: rotation.channel,
-    text: `*${rotation.name}* — <@${member.slack_user_id}> you're up! 🔄`,
+    text: message,
     blocks: [
       {
         type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*${rotation.name}*\n<@${member.slack_user_id}> you're up! 🔄`,
-        },
+        text: { type: "mrkdwn", text: message },
       },
       {
         type: "context",
         elements: [
-          {
-            type: "mrkdwn",
-            text: `📅 ${describeSchedule(rotation)}`,
-          },
+          { type: "mrkdwn", text: `📅 ${describeSchedule(rotation)}` },
         ],
       },
     ],

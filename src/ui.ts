@@ -1,5 +1,5 @@
-import type { Rotation } from "./db.js";
-import type { Member } from "./db.js";
+import type { Rotation, Member } from "./db.js";
+import { DEFAULT_MESSAGE_TEMPLATE } from "./db.js";
 import { describeSchedule } from "./rotations.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -127,6 +127,12 @@ export function buildRotationList(
           },
           {
             type: "button",
+            text: { type: "plain_text", text: "↕ Reorder" },
+            action_id: "open_reorder_rotation",
+            value: String(rotation.id),
+          },
+          {
+            type: "button",
             text: { type: "plain_text", text: "✏ Edit" },
             action_id: "open_edit_rotation",
             value: String(rotation.id),
@@ -168,16 +174,24 @@ export function buildRotationModal(opts: {
   /** Rotation ID — passed through private_metadata in edit mode */
   rotationId?: number;
   prefill?: Rotation & { memberIds: string[] };
+  /**
+   * Cadence to use for field visibility — set by the live cadence_select action.
+   * Falls back to prefill?.cadence, then 'weekly'.
+   */
+  activeCadence?: "daily" | "weekly" | "monthly";
 }) {
-  const { callbackId, title, rotationId, prefill } = opts;
+  const { callbackId, title, rotationId, prefill, activeCadence } = opts;
 
   const cadenceOptions = CADENCES.map((c) => optionFor(c.label, c.value));
   const timezoneOptions = TIMEZONES.map((tz) => optionFor(tz.label, tz.value));
   const dayOptions = DAYS_OF_WEEK.map((d) => optionFor(d.label, d.value));
 
+  const cadence: "daily" | "weekly" | "monthly" =
+    activeCadence ?? prefill?.cadence ?? "weekly";
+
   // Pre-fill helpers
   const prefillCadence = cadenceOptions.find(
-    (o) => o.value === (prefill?.cadence ?? "weekly"),
+    (o) => o.value === cadence,
   );
   const prefillDays = prefill?.days
     ? (JSON.parse(prefill.days) as number[])
@@ -241,12 +255,31 @@ export function buildRotationModal(opts: {
         },
       },
 
+      // ── Message template ──────────────────────────────────────────
+      {
+        type: "input",
+        block_id: "message_block",
+        label: { type: "plain_text", text: "Message template" },
+        hint: {
+          type: "plain_text",
+          text: "{{user}} = tagged person, {{rotation}} = rotation name",
+        },
+        element: {
+          type: "plain_text_input",
+          action_id: "message_input",
+          multiline: true,
+          initial_value:
+            prefill?.message_template ?? DEFAULT_MESSAGE_TEMPLATE,
+        },
+      },
+
       { type: "divider" },
 
       // ── Cadence ───────────────────────────────────────────────────
       {
         type: "input",
         block_id: "cadence_block",
+        dispatch_action: true,
         label: { type: "plain_text", text: "Cadence" },
         element: {
           type: "static_select",
@@ -256,48 +289,48 @@ export function buildRotationModal(opts: {
         },
       },
 
-      // ── Days of week (shown for weekly) ───────────────────────────
-      {
-        type: "input",
-        block_id: "days_block",
-        label: { type: "plain_text", text: "Days of week" },
-        hint: {
-          type: "plain_text",
-          text: "For weekly rotations only — ignored otherwise.",
-        },
-        optional: true,
-        element: {
-          type: "checkboxes",
-          action_id: "days_checkboxes",
-          options: dayOptions,
-          ...(prefillDays && prefillDays.length > 0
-            ? { initial_options: prefillDays }
-            : {}),
-        },
-      },
+      // ── Days of week (weekly only) ────────────────────────────────
+      ...(cadence === "weekly"
+        ? [
+            {
+              type: "input",
+              block_id: "days_block",
+              label: { type: "plain_text", text: "Days of week" },
+              optional: true,
+              element: {
+                type: "checkboxes",
+                action_id: "days_checkboxes",
+                options: dayOptions,
+                ...(prefillDays && prefillDays.length > 0
+                  ? { initial_options: prefillDays }
+                  : {}),
+              },
+            },
+          ]
+        : []),
 
-      // ── Day of month (shown for monthly) ──────────────────────────
-      {
-        type: "input",
-        block_id: "day_of_month_block",
-        label: { type: "plain_text", text: "Day of month" },
-        hint: {
-          type: "plain_text",
-          text: "For monthly rotations only (1–28) — ignored otherwise.",
-        },
-        optional: true,
-        element: {
-          type: "number_input",
-          action_id: "day_of_month_input",
-          is_decimal_allowed: false,
-          min_value: "1",
-          max_value: "28",
-          initial_value:
-            prefill?.day_of_month != null
-              ? String(prefill.day_of_month)
-              : undefined,
-        },
-      },
+      // ── Day of month (monthly only) ───────────────────────────────
+      ...(cadence === "monthly"
+        ? [
+            {
+              type: "input",
+              block_id: "day_of_month_block",
+              label: { type: "plain_text", text: "Day of month (1–28)" },
+              optional: true,
+              element: {
+                type: "number_input",
+                action_id: "day_of_month_input",
+                is_decimal_allowed: false,
+                min_value: "1",
+                max_value: "28",
+                initial_value:
+                  prefill?.day_of_month != null
+                    ? String(prefill.day_of_month)
+                    : undefined,
+              },
+            },
+          ]
+        : []),
 
       { type: "divider" },
 
@@ -350,6 +383,7 @@ export interface ParsedRotationForm {
   hour: number;
   minute: number;
   timezone: string;
+  messageTemplate: string;
 }
 
 export function parseModalValues(
@@ -364,11 +398,11 @@ export function parseModalValues(
     values.cadence_block.cadence_select.selected_option?.value ?? "weekly";
 
   const selectedDays: Array<{ value: string }> =
-    values.days_block.days_checkboxes.selected_options ?? [];
+    values.days_block?.days_checkboxes?.selected_options ?? [];
   const days = selectedDays.map((o) => parseInt(o.value, 10));
 
   const dayOfMonthRaw: string | null =
-    values.day_of_month_block.day_of_month_input.value ?? null;
+    values.day_of_month_block?.day_of_month_input?.value ?? null;
   const dayOfMonth = dayOfMonthRaw != null ? parseInt(dayOfMonthRaw, 10) : null;
 
   // TEMP: reading .value from plain_text_input. To revert: use .selected_time instead.
@@ -380,6 +414,9 @@ export function parseModalValues(
     values.timezone_block.timezone_select.selected_option?.value ??
     "America/New_York";
 
+  const messageTemplate: string =
+    values.message_block.message_input.value?.trim() || DEFAULT_MESSAGE_TEMPLATE;
+
   return {
     name,
     channel,
@@ -390,5 +427,72 @@ export function parseModalValues(
     hour,
     minute,
     timezone,
+    messageTemplate,
+  };
+}
+
+// ── Reorder Queue modal ───────────────────────────────────────────────────────
+
+/**
+ * One row per current member, each with a user_select pre-filled to their slot.
+ * On submit, read each slot's selected user to get the new order.
+ */
+const DATE_FMT = new Intl.DateTimeFormat("en-US", {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+});
+
+export function buildReorderModal(
+  rotation: Rotation,
+  members: Member[],
+  /** Map of slack_user_id → display name, resolved by the handler */
+  nameMap: Map<string, string>,
+  /** Next N firing dates, one per member, in queue order */
+  firingDates: Date[],
+) {
+  function displayName(userId: string): string {
+    return nameMap.get(userId) ?? userId;
+  }
+
+  const memberBlocks = members.map((member, i) => {
+    const dateLabel =
+      firingDates[i] != null ? ` — ${DATE_FMT.format(firingDates[i])}` : "";
+    return {
+    type: "input",
+    block_id: `slot_block_${i}`,
+    label: { type: "plain_text" as const, text: `Position ${i + 1}${dateLabel}` },
+    element: {
+      type: "static_select" as const,
+      action_id: "slot_user_select",
+      options: members.map((m) =>
+        optionFor(displayName(m.slack_user_id), m.slack_user_id),
+      ),
+      initial_option: optionFor(
+        displayName(member.slack_user_id),
+        member.slack_user_id,
+      ),
+    },
+  };
+  });
+
+  return {
+    type: "modal" as const,
+    callback_id: "reorder_rotation",
+    private_metadata: String(rotation.id),
+    title: { type: "plain_text" as const, text: "Reorder Queue" },
+    submit: { type: "plain_text" as const, text: "Save order" },
+    close: { type: "plain_text" as const, text: "Cancel" },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${rotation.name}* — assign a member to each position.\nPosition 1 will be next up after saving.`,
+        },
+      },
+      { type: "divider" },
+      ...memberBlocks,
+    ],
   };
 }
