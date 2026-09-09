@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseModalValues } from '../src/ui.js';
+import { parseModalValues, parsePrivateMeta, buildRotationModal, buildRotationList } from '../src/ui.js';
 import { DEFAULT_MESSAGE_TEMPLATE } from '../src/db.js';
+import type { Rotation, Member } from '../src/db.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,89 @@ function makeValues(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+// ── parsePrivateMeta ──────────────────────────────────────────────────────────
+
+describe('parsePrivateMeta', () => {
+  it('returns empty object for empty string', () => {
+    expect(parsePrivateMeta('')).toEqual({});
+  });
+
+  it('parses JSON format {id, channel}', () => {
+    expect(parsePrivateMeta(JSON.stringify({ id: 42, channel: 'C123' }))).toEqual({ id: 42, channel: 'C123' });
+  });
+
+  it('parses legacy plain number string', () => {
+    expect(parsePrivateMeta('7')).toEqual({ id: 7 });
+  });
+
+  it('returns empty object for malformed JSON', () => {
+    expect(parsePrivateMeta('not-json-or-number')).toEqual({});
+  });
+
+  it('handles channel being empty string in JSON', () => {
+    expect(parsePrivateMeta(JSON.stringify({ id: 1, channel: '' }))).toEqual({ id: 1, channel: '' });
+  });
+});
+
+// ── buildRotationModal private_metadata ───────────────────────────────────────
+
+describe('buildRotationModal', () => {
+  it('stores id and channel as JSON in private_metadata', () => {
+    const modal = buildRotationModal({
+      callbackId: 'edit_rotation',
+      title: 'Edit',
+      rotationId: 5,
+      channel: 'C999',
+    });
+    expect(JSON.parse(modal.private_metadata)).toEqual({ id: 5, channel: 'C999' });
+  });
+
+  it('stores undefined id and empty channel for create modal', () => {
+    const modal = buildRotationModal({ callbackId: 'create_rotation', title: 'Create' });
+    const meta = JSON.parse(modal.private_metadata);
+    expect(meta.id).toBeUndefined();
+    expect(meta.channel).toBe('');
+  });
+});
+
+// ── buildRotationList buttons ─────────────────────────────────────────────────
+
+function makeRotationWithMembers(overrides: Partial<Rotation> = {}): Rotation & { members: Member[] } {
+  return {
+    id: 1, name: 'Test', channel: 'C123', cadence: 'daily', days: null,
+    day_of_month: null, hour: 9, minute: 0, timezone: 'America/New_York',
+    message_template: null, owners: null, current_index: 0,
+    created_at: '2026-01-01', members: [],
+    ...overrides,
+  };
+}
+
+describe('buildRotationList', () => {
+  it('includes open_create_rotation button', () => {
+    const blocks = buildRotationList([makeRotationWithMembers()]);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('open_create_rotation');
+  });
+
+  it('includes skip_rotation button', () => {
+    const blocks = buildRotationList([makeRotationWithMembers()]);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('skip_rotation');
+  });
+
+  it('includes trigger confirm text', () => {
+    const blocks = buildRotationList([makeRotationWithMembers({ name: 'Standup' })]);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('advance the queue');
+  });
+
+  it('shows create button even when list is empty', () => {
+    const blocks = buildRotationList([]);
+    const json = JSON.stringify(blocks);
+    expect(json).toContain('Create rotation');
+  });
+});
 
 // ── parseModalValues ──────────────────────────────────────────────────────────
 

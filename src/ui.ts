@@ -118,6 +118,17 @@ export function buildRotationList(
       type: "header",
       text: { type: "plain_text", text: "Active Rotations" },
     },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "➕ Create rotation" },
+          action_id: "open_create_rotation",
+          style: "primary",
+        },
+      ],
+    },
   ];
 
   for (const rotation of rotations) {
@@ -146,6 +157,30 @@ export function buildRotationList(
             text: { type: "plain_text", text: "▶ Trigger now" },
             action_id: "trigger_rotation",
             value: String(rotation.id),
+            confirm: {
+              title: { type: "plain_text", text: "Trigger rotation?" },
+              text: {
+                type: "mrkdwn",
+                text: `This will post the *${rotation.name}* message now and advance the queue.`,
+              },
+              confirm: { type: "plain_text", text: "Trigger" },
+              deny: { type: "plain_text", text: "Cancel" },
+            },
+          },
+          {
+            type: "button",
+            text: { type: "plain_text", text: "⏭ Skip" },
+            action_id: "skip_rotation",
+            value: String(rotation.id),
+            confirm: {
+              title: { type: "plain_text", text: "Skip this person?" },
+              text: {
+                type: "mrkdwn",
+                text: `This will advance the queue without posting a message. ${currentMember ? `<@${currentMember.slack_user_id}> will be skipped.` : ""}`,
+              },
+              confirm: { type: "plain_text", text: "Skip" },
+              deny: { type: "plain_text", text: "Cancel" },
+            },
           },
           {
             type: "button",
@@ -195,6 +230,8 @@ export function buildRotationModal(opts: {
   title: string;
   /** Rotation ID — passed through private_metadata in edit mode */
   rotationId?: number;
+  /** Channel ID where /rotation was invoked — used to refresh the list after save */
+  channel?: string;
   prefill?: Rotation & { memberIds: string[]; ownerIds: string[] };
   /**
    * Cadence to use for field visibility — set by the live cadence_select action.
@@ -202,7 +239,7 @@ export function buildRotationModal(opts: {
    */
   activeCadence?: "daily" | "weekly" | "monthly";
 }) {
-  const { callbackId, title, rotationId, prefill, activeCadence } = opts;
+  const { callbackId, title, rotationId, channel, prefill, activeCadence } = opts;
 
   const cadenceOptions = CADENCES.map((c) => optionFor(c.label, c.value));
   const timezoneOptions = TIMEZONES.map((tz) => optionFor(tz.label, tz.value));
@@ -229,7 +266,7 @@ export function buildRotationModal(opts: {
   return {
     type: "modal" as const,
     callback_id: callbackId,
-    private_metadata: rotationId != null ? String(rotationId) : "",
+    private_metadata: JSON.stringify({ id: rotationId, channel: channel ?? "" }),
     title: { type: "plain_text" as const, text: title },
     submit: { type: "plain_text" as const, text: "Save" },
     close: { type: "plain_text" as const, text: "Cancel" },
@@ -242,7 +279,7 @@ export function buildRotationModal(opts: {
         element: {
           type: "plain_text_input",
           action_id: "name_input",
-          placeholder: { type: "plain_text", text: "e.g. Prism New Issues" },
+          placeholder: { type: "plain_text", text: "e.g. Pod Standup" },
           initial_value: prefill?.name,
         },
       },
@@ -405,6 +442,27 @@ export function buildRotationModal(opts: {
   };
 }
 
+// ── Private metadata helpers ──────────────────────────────────────────────────
+
+/**
+ * Parses private_metadata which may be:
+ *   - empty string (create modal)
+ *   - plain number string, legacy (edit modal before channel was threaded)
+ *   - JSON { id, channel } (current format)
+ */
+export function parsePrivateMeta(meta: string): { id?: number; channel?: string } {
+  if (!meta) return {};
+  try {
+    const parsed = JSON.parse(meta);
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed as { id: number; channel: string };
+    }
+    // JSON.parse('7') returns a number — fall through to parseInt
+  } catch { /* not JSON */ }
+  const id = parseInt(meta, 10);
+  return Number.isFinite(id) ? { id } : {};
+}
+
 // ── Parse modal submission values ─────────────────────────────────────────────
 
 export interface ParsedRotationForm {
@@ -489,6 +547,8 @@ export function buildReorderModal(
   nameMap: Map<string, string>,
   /** Next N firing dates, one per member, in queue order */
   firingDates: Date[],
+  /** Channel where the list was shown — used to refresh after save */
+  channel = "",
 ) {
   function displayName(userId: string): string {
     return nameMap.get(userId) ?? userId;
@@ -518,7 +578,7 @@ export function buildReorderModal(
   return {
     type: "modal" as const,
     callback_id: "reorder_rotation",
-    private_metadata: String(rotation.id),
+    private_metadata: JSON.stringify({ id: rotation.id, channel }),
     title: { type: "plain_text" as const, text: "Reorder Queue" },
     submit: { type: "plain_text" as const, text: "Save order" },
     close: { type: "plain_text" as const, text: "Cancel" },

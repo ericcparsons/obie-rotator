@@ -1,5 +1,5 @@
 import { App, type RespondArguments, type BlockButtonAction } from "@slack/bolt";
-import { getRotation, getMembers, isOwner, reorderMembers } from "./db.js";
+import { getRotation, getMembers, isOwner, reorderMembers, advanceMember } from "./db.js";
 import {
   createRotation,
   updateRotation,
@@ -21,12 +21,34 @@ import {
   buildRotationModal,
   buildReorderModal,
   parseModalValues,
+  parsePrivateMeta,
 } from "./ui.js";
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
 function rotationIdFromAction(body: BlockButtonAction): number {
   return parseInt(body.actions[0].value ?? "", 10);
+}
+
+/** Channel ID from a button action body */
+function channelFromAction(body: BlockButtonAction): string {
+  return (body as unknown as { channel?: { id?: string } }).channel?.id ?? "";
+}
+
+/** Posts the owner's updated rotation list as a new ephemeral in the given channel */
+async function refreshList(
+  userId: string,
+  channelId: string,
+): Promise<void> {
+  if (!channelId) return;
+  const rotations = listRotationsOwnedBy(userId);
+  await app.client.chat.postEphemeral({
+    channel: channelId,
+    user: userId,
+    text: "Rotations",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    blocks: buildRotationList(rotations) as any,
+  });
 }
 
 function validateRotationForm(
@@ -161,9 +183,7 @@ app.action("cadence_select", async ({ ack, body, client }) => {
     ?.value as "daily" | "weekly" | "monthly";
   const view = b.view;
   const callbackId = view.callback_id as "create_rotation" | "edit_rotation";
-  const rotationId = view.private_metadata
-    ? parseInt(view.private_metadata, 10)
-    : undefined;
+  const { id: rotationId } = parsePrivateMeta(view.private_metadata);
 
   await client.views.update({
     view_id: view.id,
@@ -171,7 +191,7 @@ app.action("cadence_select", async ({ ack, body, client }) => {
     view: buildRotationModal({
       callbackId,
       title: callbackId === "edit_rotation" ? "Edit Rotation" : "Create Rotation",
-      rotationId: rotationId != null && Number.isFinite(rotationId) ? rotationId : undefined,
+      rotationId,
       activeCadence: selectedCadence,
     }),
   });
@@ -194,12 +214,15 @@ app.action("open_edit_rotation", async ({ ack, body, client, respond }) => {
   const members = getMembers(rotationId);
   const ownerIds = rotation.owners ? JSON.parse(rotation.owners) as string[] : [];
 
+  const channel = channelFromAction(body as BlockButtonAction);
+
   await client.views.open({
     trigger_id: (body as { trigger_id: string }).trigger_id,
     view: buildRotationModal({
       callbackId: "edit_rotation",
       title: "Edit Rotation",
       rotationId,
+      channel,
       prefill: { ...rotation, memberIds: members.map((m) => m.slack_user_id), ownerIds },
     }),
   });
@@ -242,10 +265,13 @@ app.action("delete_rotation", async ({ ack, body, respond }) => {
   cancelRotation(rotationId);
   deleteRotation(rotationId);
 
+  const updatedRotations = listRotationsOwnedBy(body.user.id);
   await respond({
     response_type: "ephemeral",
     replace_original: true,
     text: `Rotation *${name}* deleted.`,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    blocks: buildRotationList(updatedRotations) as any,
   });
 });
 
@@ -289,7 +315,9 @@ app.view("create_rotation", async ({ ack, body, view }) => {
 // ── View submission: edit rotation ────────────────────────────────────────────
 
 app.view("edit_rotation", async ({ ack, body, view }) => {
-  const rotationId = parseInt(view.private_metadata, 10);
+  const { id: rotationId, channel } = parsePrivateMeta(view.private_metadata);
+  if (!rotationId) { await ack(); return; }
+
   const form = parseModalValues(view.state.values);
   const errors = validateRotationForm(form);
   if (errors) {
@@ -312,8 +340,8 @@ app.view("edit_rotation", async ({ ack, body, view }) => {
     memberIds: form.memberIds,
   });
 
-  // Reschedule with updated settings
   scheduleRotation(app, rotation);
+  await refreshList(body.user.id, channel ?? "");
 });
 
 // ── Action: open reorder modal ────────────────────────────────────────────────
@@ -356,26 +384,27 @@ app.action("open_reorder_rotation", async ({ ack, body, client, respond }) => {
   );
 
   const firingDates = getNextFiringDates(rotation, members.length);
+  const channel = channelFromAction(body as BlockButtonAction);
 
   await client.views.open({
     trigger_id: (body as { trigger_id: string }).trigger_id,
-    view: buildReorderModal(rotation, members, nameMap, firingDates),
+    view: buildReorderModal(rotation, members, nameMap, firingDates, channel),
   });
 });
 
 // ── View submission: reorder rotation ────────────────────────────────────────
 
-app.view("reorder_rotation", async ({ ack, view }) => {
-  const rotationId = parseInt(view.private_metadata, 10);
+app.view("reorder_rotation", async ({ ack, body, view }) => {
+  const { id: rotationId, channel } = parsePrivateMeta(view.private_metadata);
+  if (!rotationId) { await ack(); return; }
+
   const members = getMembers(rotationId);
   const values = view.state.values;
 
-  // Read each slot's selected user in slot order
   const newOrder = members.map((_, i) =>
     values[`slot_block_${i}`].slot_user_select.selected_option?.value as string,
   );
 
-  // Validate before ack so we can return a proper error to the user
   const unique = new Set(newOrder);
   if (unique.size !== newOrder.length) {
     await ack({
@@ -387,6 +416,33 @@ app.view("reorder_rotation", async ({ ack, view }) => {
 
   await ack();
   reorderMembers(rotationId, newOrder);
+  await refreshList(body.user.id, channel ?? "");
+});
+
+// ── Action: skip current member ───────────────────────────────────────────────
+
+app.action("skip_rotation", async ({ ack, body, respond }) => {
+  await ack();
+
+  const rotationId = rotationIdFromAction(body as BlockButtonAction);
+  const rotation = getRotation(rotationId);
+  if (!rotation) return;
+
+  if (!isOwner(rotation, body.user.id)) {
+    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
+    return;
+  }
+
+  advanceMember(rotationId);
+
+  const updatedRotations = listRotationsOwnedBy(body.user.id);
+  await respond({
+    response_type: "ephemeral",
+    replace_original: true,
+    text: "Rotations",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    blocks: buildRotationList(updatedRotations) as any,
+  });
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
