@@ -123,36 +123,6 @@ app.command("/rotation-status", async ({ command, ack, respond }) => {
   } as RespondArguments);
 });
 
-// ── /rotation-next <name>  (manual trigger, useful for testing) ───────────────
-
-app.command("/rotation-next", async ({ command, ack, respond }) => {
-  await ack();
-
-  const name = command.text.trim();
-  if (!name) {
-    await respond("Usage: `/rotation-next <rotation name>`");
-    return;
-  }
-
-  const rotations = listRotationsWithMembers();
-  const rotation = rotations.find(
-    (r) => r.name.toLowerCase() === name.toLowerCase(),
-  );
-
-  if (!rotation) {
-    await respond(
-      `No rotation named "${name}" found. Use \`/rotation\` to see all.`,
-    );
-    return;
-  }
-
-  await fireRotation(app, rotation);
-  await respond({
-    response_type: "ephemeral",
-    text: `Triggered *${rotation.name}*!`,
-  });
-});
-
 // ── Action: open create modal ─────────────────────────────────────────────────
 
 app.action("open_create_rotation", async ({ ack, body, client }) => {
