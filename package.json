@@ -12,10 +12,11 @@
     "db:reset": "rm -f data/rotator.db"
   },
   "dependencies": {
-    "@slack/bolt": "^3.19.0",
+    "@slack/bolt": "^5.1.0",
     "cron-parser": "^5.10.0",
     "dotenv": "^16.4.5",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "undici": "^8.10.2"
   },
   "engines": {
     "node": ">=22.0.0"
