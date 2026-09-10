@@ -8,7 +8,7 @@ import {
   type Rotation,
   DEFAULT_MESSAGE_TEMPLATE,
 } from "./db.js";
-import { buildCronExpression, describeSchedule } from "./rotations.js";
+import { buildCronExpression } from "./rotations.js";
 import {
   getTodayInTimezone,
   getSkipDate,
@@ -65,12 +65,6 @@ export async function fireRotation(
         {
           type: "section",
           text: { type: "mrkdwn", text: message },
-        },
-        {
-          type: "context",
-          elements: [
-            { type: "mrkdwn", text: `📅 ${describeSchedule(fresh)}` },
-          ],
         },
       ],
     });
