@@ -43,6 +43,12 @@ db.exec(`
     position      INTEGER NOT NULL,
     UNIQUE(rotation_id, position)
   );
+
+  CREATE TABLE IF NOT EXISTS skip_dates (
+    date  TEXT PRIMARY KEY,  -- YYYY-MM-DD
+    label TEXT NOT NULL,
+    emoji TEXT NOT NULL DEFAULT ':calendar:'
+  );
 `);
 
 // Migrations: add columns introduced after initial schema.

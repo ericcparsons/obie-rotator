@@ -9,7 +9,9 @@
     "start": "node dist/index.js",
     "test": "VITE_CONFIG_NATIVE_IGNORE_WARNING=true vitest run",
     "test:watch": "VITE_CONFIG_NATIVE_IGNORE_WARNING=true vitest",
-    "db:reset": "rm -f data/rotator.db"
+    "db:reset": "rm -f data/rotator.db",
+    "holiday:add-test": "node --env-file=.env scripts/holiday-add-test.mjs",
+    "holiday:remove-test": "node --env-file=.env scripts/holiday-remove-test.mjs"
   },
   "dependencies": {
     "@slack/bolt": "^5.1.0",

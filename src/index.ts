@@ -6,9 +6,12 @@ import {
   deleteRotation,
   listRotationsWithMembers,
   listRotationsOwnedBy,
-  getNextFiringDates,
   rotateToCurrentIndex,
+  getNextFiringDates,
 } from "./rotations.js";
+import {
+  getAnnotatedFiringDates,
+} from "./holidays.js";
 import {
   initScheduler,
   scheduleRotation,
@@ -117,14 +120,22 @@ app.command("/rotation-status", async ({ command, ack, respond }) => {
       rotation.current_index,
     );
 
-    const firingDates = getNextFiringDates(rotation, orderedMembers.length);
+    const annotatedDates = getAnnotatedFiringDates(rotation, orderedMembers.length);
 
-    const queueLines = orderedMembers.map((m, i) => {
-      const date = firingDates[i] ? dateFmt.format(firingDates[i]) : "";
-      const marker = i === 0 ? "→" : "  ";
-      const suffix = i === 0 ? " _(next up)_" : "";
-      return `${marker} ${date} — <@${m.slack_user_id}>${suffix}`;
-    });
+    const queueLines: string[] = [];
+    let personIdx = 0;
+    for (const entry of annotatedDates) {
+      const dateStr = dateFmt.format(entry.date);
+      if (entry.holiday) {
+        queueLines.push(`   ${dateStr} — ${entry.holiday.emoji} _${entry.holiday.label}_ (holiday)`);
+      } else {
+        const m = orderedMembers[personIdx];
+        const marker = personIdx === 0 ? "→" : "  ";
+        const suffix = personIdx === 0 ? " _(next up)_" : "";
+        queueLines.push(`${marker} ${dateStr} — <@${m.slack_user_id}>${suffix}`);
+        personIdx++;
+      }
+    }
 
     blocks.push(
       {
@@ -450,5 +461,5 @@ app.action("skip_rotation", async ({ ack, body, respond }) => {
 (async () => {
   await app.start();
   console.log("obie-rotator running (Socket Mode)");
-  initScheduler(app);
+  await initScheduler(app);
 })();

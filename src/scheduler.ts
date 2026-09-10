@@ -9,6 +9,12 @@ import {
   DEFAULT_MESSAGE_TEMPLATE,
 } from "./db.js";
 import { buildCronExpression, describeSchedule } from "./rotations.js";
+import {
+  getTodayInTimezone,
+  getSkipDate,
+  hasSkipDatesForYear,
+  refreshHolidaysForYear,
+} from "./holidays.js";
 
 // Keyed by rotation ID so we can cancel/replace individual jobs
 const activeTasks = new Map<number, ScheduledTask>();
@@ -26,6 +32,16 @@ export async function fireRotation(
   const fresh = getRotation(rotation.id);
   if (!fresh) {
     console.warn(`[${rotation.name}] Rotation no longer exists — skipping.`);
+    return;
+  }
+
+  // Check if today is a company holiday — skip without advancing the queue
+  const today = getTodayInTimezone(fresh.timezone);
+  const holiday = getSkipDate(today);
+  if (holiday) {
+    console.log(
+      `[${fresh.name}] Holiday — ${holiday.emoji} ${holiday.label}. Skipping (queue unchanged).`,
+    );
     return;
   }
 
@@ -117,9 +133,21 @@ export function cancelRotation(id: number): void {
 
 /**
  * Loads all rotations from the DB and starts their cron jobs.
+ * Also ensures holidays are loaded for the current year.
  * Call once at startup.
  */
-export function initScheduler(app: App): void {
+export async function initScheduler(app: App): Promise<void> {
+  // Load holidays for the current year if not already done
+  const year = new Date().getFullYear();
+  if (!hasSkipDatesForYear(year)) {
+    await refreshHolidaysForYear(year);
+  }
+
+  // Refresh holidays every Jan 1 at midnight UTC for the new year
+  cron.schedule("0 0 1 1 *", async () => {
+    await refreshHolidaysForYear(new Date().getFullYear());
+  }, { timezone: "UTC" });
+
   const rotations = allRotations();
 
   if (rotations.length === 0) {
