@@ -1,5 +1,5 @@
 import { App, type RespondArguments, type BlockButtonAction } from "@slack/bolt";
-import { getRotation, getMembers, isOwner, reorderMembers, advanceMember } from "./db.js";
+import { db, getRotation, getMembers, isOwner, reorderMembers, advanceMember } from "./db.js";
 import {
   createRotation,
   updateRotation,
@@ -11,6 +11,9 @@ import {
 } from "./rotations.js";
 import {
   getAnnotatedFiringDates,
+  getRotationSkipDates,
+  removeRotationSkipDate,
+  toDateString,
 } from "./holidays.js";
 import {
   initScheduler,
@@ -23,6 +26,7 @@ import {
   buildRotationList,
   buildRotationModal,
   buildReorderModal,
+  buildSkipDateModal,
   parseModalValues,
   parsePrivateMeta,
 } from "./ui.js";
@@ -127,7 +131,8 @@ app.command("/rotation-status", async ({ command, ack, respond }) => {
     for (const entry of annotatedDates) {
       const dateStr = dateFmt.format(entry.date);
       if (entry.holiday) {
-        queueLines.push(`   ${dateStr} — ${entry.holiday.emoji} _${entry.holiday.label}_ (holiday)`);
+        const suffix = entry.holiday.isHoliday ? "(holiday)" : "(skipped)";
+        queueLines.push(`   ${dateStr} — ${entry.holiday.emoji} _${entry.holiday.label}_ ${suffix}`);
       } else {
         const m = orderedMembers[personIdx];
         const marker = personIdx === 0 ? "→" : "  ";
@@ -259,31 +264,82 @@ app.action("trigger_rotation", async ({ ack, body, respond }) => {
   await fireRotation(app, rotation);
 });
 
-// ── Action: delete rotation ───────────────────────────────────────────────────
+// ── Action: overflow menu ─────────────────────────────────────────────────────
 
-app.action("delete_rotation", async ({ ack, body, respond }) => {
+app.action("rotation_overflow", async ({ ack, body, client, respond }) => {
   await ack();
 
-  const rotationId = rotationIdFromAction(body as BlockButtonAction);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const b = body as any;
+  const selected: string = b.actions[0].selected_option?.value ?? "";
+  const [action, idStr] = selected.split(":");
+  const rotationId = parseInt(idStr, 10);
   const rotation = getRotation(rotationId);
-  const name = rotation?.name ?? `#${rotationId}`;
+  if (!rotation) return;
 
-  if (rotation && !isOwner(rotation, body.user.id)) {
+  if (!isOwner(rotation, body.user.id)) {
     await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
     return;
   }
 
-  cancelRotation(rotationId);
-  deleteRotation(rotationId);
+  const channel = channelFromAction(body as BlockButtonAction);
 
-  const updatedRotations = listRotationsOwnedBy(body.user.id);
-  await respond({
-    response_type: "ephemeral",
-    replace_original: true,
-    text: `Rotation *${name}* deleted.`,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    blocks: buildRotationList(updatedRotations) as any,
-  });
+  if (action === "reorder") {
+    const rawMembers = getMembers(rotationId);
+    if (rawMembers.length === 0) return;
+    const members = rotateToCurrentIndex(rawMembers, rotation.current_index);
+    const nameMap = new Map<string, string>();
+    await Promise.all(
+      members.map(async (m) => {
+        try {
+          const res = await client.users.info({ user: m.slack_user_id });
+          const profile = res.user?.profile;
+          nameMap.set(
+            m.slack_user_id,
+            profile?.display_name_normalized ||
+            profile?.real_name_normalized ||
+            profile?.real_name ||
+            m.slack_user_id,
+          );
+        } catch {
+          nameMap.set(m.slack_user_id, m.slack_user_id);
+        }
+      }),
+    );
+    const firingDates = getNextFiringDates(rotation, members.length);
+    await client.views.open({
+      trigger_id: b.trigger_id,
+      view: buildReorderModal(rotation, members, nameMap, firingDates, channel),
+    });
+
+  } else if (action === "skip_date") {
+    const entries = getAnnotatedFiringDates(rotation, 1);
+    const nextDate = entries[0]
+      ? toDateString(entries[0].date, rotation.timezone)
+      : new Date().toISOString().slice(0, 10);
+    const existingSkips = getRotationSkipDates(rotation.id);
+    await client.views.open({
+      trigger_id: b.trigger_id,
+      view: buildSkipDateModal({ rotation, nextDate, channel, existingSkips }),
+    });
+
+  } else if (action === "skip_person") {
+    advanceMember(rotationId);
+    await refreshList(body.user.id, channel);
+
+  } else if (action === "delete") {
+    const name = rotation.name;
+    cancelRotation(rotationId);
+    deleteRotation(rotationId);
+    const updatedRotations = listRotationsOwnedBy(body.user.id);
+    await respond({
+      response_type: "ephemeral",
+      replace_original: true,
+      text: `Rotation *${name}* deleted.`,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      blocks: buildRotationList(updatedRotations) as any,
+    });
+  }
 });
 
 // ── View submission: create rotation ─────────────────────────────────────────
@@ -355,53 +411,7 @@ app.view("edit_rotation", async ({ ack, body, view }) => {
   await refreshList(body.user.id, channel ?? "");
 });
 
-// ── Action: open reorder modal ────────────────────────────────────────────────
 
-app.action("open_reorder_rotation", async ({ ack, body, client, respond }) => {
-  await ack();
-
-  const rotationId = rotationIdFromAction(body as BlockButtonAction);
-  const rotation = getRotation(rotationId);
-  if (!rotation) return;
-
-  if (!isOwner(rotation, body.user.id)) {
-    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
-    return;
-  }
-
-  const rawMembers = getMembers(rotationId);
-  if (rawMembers.length === 0) return;
-
-  // Rotate so "next up" is first
-  const members = rotateToCurrentIndex(rawMembers, rotation.current_index);
-
-  // Resolve display names for all members (requires users:read scope)
-  const nameMap = new Map<string, string>();
-  await Promise.all(
-    members.map(async (m) => {
-      try {
-        const res = await client.users.info({ user: m.slack_user_id });
-        const profile = res.user?.profile;
-        const name =
-          profile?.display_name_normalized ||
-          profile?.real_name_normalized ||
-          profile?.real_name ||
-          m.slack_user_id;
-        nameMap.set(m.slack_user_id, name);
-      } catch {
-        nameMap.set(m.slack_user_id, m.slack_user_id);
-      }
-    }),
-  );
-
-  const firingDates = getNextFiringDates(rotation, members.length);
-  const channel = channelFromAction(body as BlockButtonAction);
-
-  await client.views.open({
-    trigger_id: (body as { trigger_id: string }).trigger_id,
-    view: buildReorderModal(rotation, members, nameMap, firingDates, channel),
-  });
-});
 
 // ── View submission: reorder rotation ────────────────────────────────────────
 
@@ -430,29 +440,72 @@ app.view("reorder_rotation", async ({ ack, body, view }) => {
   await refreshList(body.user.id, channel ?? "");
 });
 
-// ── Action: skip current member ───────────────────────────────────────────────
+// ── View submission: skip date ────────────────────────────────────────────────
 
-app.action("skip_rotation", async ({ ack, body, respond }) => {
-  await ack();
+app.view("skip_date", async ({ ack, body, view }) => {
+  const fromDate: string = view.state.values.skip_from_block.skip_from_picker.selected_date ?? "";
+  const toDate: string = view.state.values.skip_to_block.skip_to_picker.selected_date ?? "";
 
-  const rotationId = rotationIdFromAction(body as BlockButtonAction);
-  const rotation = getRotation(rotationId);
-  if (!rotation) return;
-
-  if (!isOwner(rotation, body.user.id)) {
-    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
+  if (toDate < fromDate) {
+    await ack({
+      response_action: "errors",
+      errors: { skip_to_block: '"To" date must be on or after "From" date.' },
+    });
     return;
   }
 
-  advanceMember(rotationId);
+  await ack();
 
-  const updatedRotations = listRotationsOwnedBy(body.user.id);
-  await respond({
-    response_type: "ephemeral",
-    replace_original: true,
-    text: "Rotations",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    blocks: buildRotationList(updatedRotations) as any,
+  const { id: rotationId, channel } = parsePrivateMeta(view.private_metadata);
+  if (!rotationId) return;
+
+  const rotation = getRotation(rotationId);
+  if (!rotation) return;
+
+  const reason: string = view.state.values.skip_reason_block?.skip_reason_input?.value?.trim() || "Skipped";
+  const emoji: string = view.state.values.skip_emoji_block?.skip_emoji_input?.value?.trim() || ":calendar:";
+  const stmt = db.prepare("INSERT OR REPLACE INTO skip_dates (date, rotation_id, label, emoji) VALUES (?, ?, ?, ?)");
+
+  // Insert every date in the range
+  const current = new Date(`${fromDate}T12:00:00Z`);
+  const end = new Date(`${toDate}T12:00:00Z`);
+  while (current <= end) {
+    stmt.run(current.toISOString().slice(0, 10), rotationId, reason, emoji);
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  await refreshList(body.user.id, channel ?? "");
+});
+
+// ── Action: remove a rotation-specific skip date ──────────────────────────────
+
+app.action("remove_skip_date", async ({ ack, body, client }) => {
+  await ack();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const b = body as any;
+  const { rotationId, date } = JSON.parse(b.actions[0].value as string) as {
+    rotationId: number;
+    date: string;
+  };
+
+  removeRotationSkipDate(rotationId, date);
+
+  // Refresh the modal to reflect the removal
+  const rotation = getRotation(rotationId);
+  if (!rotation) return;
+
+  const { channel } = parsePrivateMeta(b.view.private_metadata);
+  const entries = getAnnotatedFiringDates(rotation, 1);
+  const nextDate = entries[0]
+    ? toDateString(entries[0].date, rotation.timezone)
+    : new Date().toISOString().slice(0, 10);
+  const existingSkips = getRotationSkipDates(rotationId);
+
+  await client.views.update({
+    view_id: b.view.id,
+    hash: b.view.hash,
+    view: buildSkipDateModal({ rotation, nextDate, channel, existingSkips }),
   });
 });
 

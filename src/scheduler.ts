@@ -37,7 +37,7 @@ export async function fireRotation(
 
   // Check if today is a company holiday — skip without advancing the queue
   const today = getTodayInTimezone(fresh.timezone);
-  const holiday = getSkipDate(today);
+  const holiday = getSkipDate(today, fresh.id);
   if (holiday) {
     console.log(
       `[${fresh.name}] Holiday — ${holiday.emoji} ${holiday.label}. Skipping (queue unchanged).`,

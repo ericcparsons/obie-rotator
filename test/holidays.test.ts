@@ -16,10 +16,10 @@ function clearSkipDates() {
   db.exec("DELETE FROM skip_dates");
 }
 
-function insertSkipDate(date: string, label: string, emoji = ":calendar:") {
+function insertSkipDate(date: string, label: string, emoji = ":calendar:", rotationId: number | null = null) {
   db.prepare(
-    "INSERT OR REPLACE INTO skip_dates (date, label, emoji) VALUES (?, ?, ?)",
-  ).run(date, label, emoji);
+    "INSERT OR REPLACE INTO skip_dates (date, rotation_id, label, emoji) VALUES (?, ?, ?, ?)",
+  ).run(date, rotationId, label, emoji);
 }
 
 function dailyRotation(overrides: Partial<Rotation> = {}): Rotation {
@@ -86,7 +86,7 @@ describe("getSkipDate", () => {
   it("returns label and emoji for a skip day", () => {
     insertSkipDate("2026-07-04", "Independence Day", ":fireworks:");
     const result = getSkipDate("2026-07-04");
-    expect(result).toEqual({ label: "Independence Day", emoji: ":fireworks:" });
+    expect(result).toEqual({ label: "Independence Day", emoji: ":fireworks:", isHoliday: true });
   });
 
   it("returns null for a date that looks similar but doesn't match", () => {
@@ -127,7 +127,7 @@ const MOCK_NAGER_RESPONSE = [
 describe("refreshHolidaysForYear", () => {
   beforeEach(() => {
     clearSkipDates();
-    vi.stubGlobal(
+      vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
@@ -149,14 +149,8 @@ describe("refreshHolidaysForYear", () => {
 
   it("inserts global holidays", async () => {
     await refreshHolidaysForYear(2026);
-    expect(getSkipDate("2026-01-01")).toEqual({
-      label: "New Year's Day",
-      emoji: ":tada:",
-    });
-    expect(getSkipDate("2026-12-25")).toEqual({
-      label: "Christmas Day",
-      emoji: ":christmas_tree:",
-    });
+    expect(getSkipDate("2026-01-01")).toEqual({ label: "New Year's Day", emoji: ":tada:", isHoliday: true });
+    expect(getSkipDate("2026-12-25")).toEqual({ label: "Christmas Day", emoji: ":christmas_tree:", isHoliday: true });
   });
 
   it("skips non-global holidays", async () => {
@@ -168,18 +162,12 @@ describe("refreshHolidaysForYear", () => {
   it("adds Black Friday (day after Thanksgiving)", async () => {
     await refreshHolidaysForYear(2026);
     // Thanksgiving is Nov 26, so Black Friday is Nov 27
-    expect(getSkipDate("2026-11-27")).toEqual({
-      label: "Black Friday",
-      emoji: ":shopping_bags:",
-    });
+    expect(getSkipDate("2026-11-27")).toEqual({ label: "Black Friday", emoji: ":shopping_bags:", isHoliday: true });
   });
 
   it("adds Christmas Eve", async () => {
     await refreshHolidaysForYear(2026);
-    expect(getSkipDate("2026-12-24")).toEqual({
-      label: "Christmas Eve",
-      emoji: ":santa::skin-tone-3:",
-    });
+    expect(getSkipDate("2026-12-24")).toEqual({ label: "Christmas Eve", emoji: ":santa::skin-tone-3:", isHoliday: true });
   });
 
   it("clears existing dates for the year before repopulating", async () => {
@@ -194,6 +182,34 @@ describe("refreshHolidaysForYear", () => {
       vi.fn().mockResolvedValue({ ok: false, status: 503 }),
     );
     await expect(refreshHolidaysForYear(2026)).resolves.not.toThrow();
+  });
+});
+
+// ── getSkipDate — rotation-specific ──────────────────────────────────────────
+
+describe("getSkipDate rotation-specific", () => {
+  beforeEach(clearSkipDates);
+
+  it("returns rotation-specific skip for matching rotation", () => {
+    insertSkipDate("2026-10-15", "Team Onsite", ":office:", 1);
+    expect(getSkipDate("2026-10-15", 1)).toEqual({ label: "Team Onsite", emoji: ":office:", isHoliday: false });
+  });
+
+  it("returns null for a different rotation on the same date", () => {
+    insertSkipDate("2026-10-15", "Team Onsite", ":office:", 1);
+    expect(getSkipDate("2026-10-15", 2)).toBeNull();
+  });
+
+  it("returns global holiday regardless of rotation", () => {
+    insertSkipDate("2026-12-25", "Christmas Day", ":christmas_tree:", null);
+    expect(getSkipDate("2026-12-25", 1)).toEqual({ label: "Christmas Day", emoji: ":christmas_tree:", isHoliday: true });
+    expect(getSkipDate("2026-12-25", 99)).toEqual({ label: "Christmas Day", emoji: ":christmas_tree:", isHoliday: true });
+  });
+
+  it("global takes priority over rotation-specific on same date", () => {
+    insertSkipDate("2026-12-25", "Christmas Day", ":christmas_tree:", null);
+    insertSkipDate("2026-12-25", "Team Onsite", ":office:", 1);
+    expect(getSkipDate("2026-12-25", 1)).toEqual({ label: "Christmas Day", emoji: ":christmas_tree:", isHoliday: true });
   });
 });
 
@@ -223,7 +239,7 @@ describe("getAnnotatedFiringDates", () => {
     const entries = getAnnotatedFiringDates(dailyRotation(), 3);
     // Should have 4 entries: 1 holiday + 3 people
     expect(entries).toHaveLength(4);
-    expect(entries[0].holiday).toEqual({ label: "Test Holiday", emoji: ":test:" });
+    expect(entries[0].holiday).toEqual({ label: "Test Holiday", emoji: ":test:", isHoliday: true });
     expect(entries[1].holiday).toBeNull();
     expect(entries[2].holiday).toBeNull();
     expect(entries[3].holiday).toBeNull();

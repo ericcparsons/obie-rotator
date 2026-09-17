@@ -152,6 +152,7 @@ export function buildRotationList(
       {
         type: "actions",
         elements: [
+          // ── Primary actions ──────────────────────────────────────────
           {
             type: "button",
             text: { type: "plain_text", text: "▶ Trigger now" },
@@ -169,47 +170,38 @@ export function buildRotationList(
           },
           {
             type: "button",
-            text: { type: "plain_text", text: "⏭ Skip" },
-            action_id: "skip_rotation",
-            value: String(rotation.id),
-            confirm: {
-              title: { type: "plain_text", text: "Skip this person?" },
-              text: {
-                type: "mrkdwn",
-                text: `This will advance the queue without posting a message. ${currentMember ? `<@${currentMember.slack_user_id}> will be skipped.` : ""}`,
-              },
-              confirm: { type: "plain_text", text: "Skip" },
-              deny: { type: "plain_text", text: "Cancel" },
-            },
-          },
-          {
-            type: "button",
-            text: { type: "plain_text", text: "↕ Reorder" },
-            action_id: "open_reorder_rotation",
-            value: String(rotation.id),
-          },
-          {
-            type: "button",
             text: { type: "plain_text", text: "✏ Edit" },
             action_id: "open_edit_rotation",
             value: String(rotation.id),
           },
+          // ── Overflow (secondary actions) ─────────────────────────────
           {
-            type: "button",
-            text: { type: "plain_text", text: "🗑 Delete" },
-            action_id: "delete_rotation",
-            value: String(rotation.id),
-            style: "danger",
-            confirm: {
-              title: { type: "plain_text", text: "Delete rotation?" },
-              text: {
-                type: "mrkdwn",
-                text: `This will permanently delete *${rotation.name}* and stop all scheduled posts.`,
+            type: "overflow",
+            action_id: "rotation_overflow",
+            options: [
+              {
+                text: { type: "plain_text", text: "↕ Reorder queue" },
+                value: `reorder:${rotation.id}`,
               },
-              confirm: { type: "plain_text", text: "Delete" },
-              deny: { type: "plain_text", text: "Cancel" },
-              style: "danger",
-            },
+              {
+                text: { type: "plain_text", text: "📅 Skip a date" },
+                value: `skip_date:${rotation.id}`,
+              },
+              {
+                text: { type: "plain_text", text: "⏭ Skip next person" },
+                value: `skip_person:${rotation.id}`,
+                description: {
+                  type: "plain_text",
+                  text: currentMember
+                    ? `Advances past ${currentMember.slack_user_id} without posting`
+                    : "Advance queue without posting",
+                },
+              },
+              {
+                text: { type: "plain_text", text: "🗑 Delete rotation" },
+                value: `delete:${rotation.id}`,
+              },
+            ],
           },
         ],
       },
@@ -592,6 +584,121 @@ export function buildReorderModal(
       },
       { type: "divider" },
       ...memberBlocks,
+    ],
+  };
+}
+
+// ── Skip date modal ───────────────────────────────────────────────────────────
+
+/**
+ * Modal for skipping a specific rotation date.
+ * Pre-fills the date picker with the next scheduled occurrence.
+ */
+export function buildSkipDateModal(opts: {
+  rotation: Rotation;
+  /** Next firing date to pre-fill, YYYY-MM-DD */
+  nextDate: string;
+  channel?: string;
+  /** Existing rotation-specific skip dates to display */
+  existingSkips?: Array<{ date: string; label: string; emoji: string }>;
+}) {
+  const { rotation, nextDate, channel, existingSkips = [] } = opts;
+
+  const existingBlocks =
+    existingSkips.length > 0
+      ? [
+          { type: "divider" },
+          {
+            type: "section",
+            text: { type: "mrkdwn", text: "*Existing skip dates*" },
+          },
+          ...existingSkips.map((s) => ({
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: `${s.emoji} *${s.date}* — ${s.label}`,
+            },
+            accessory: {
+              type: "button",
+              text: { type: "plain_text", text: "Remove" },
+              action_id: "remove_skip_date",
+              // encode rotation_id + date so the handler knows what to delete
+              value: JSON.stringify({ rotationId: rotation.id, date: s.date }),
+              style: "danger",
+            },
+          })),
+        ]
+      : [];
+
+  return {
+    type: "modal" as const,
+    callback_id: "skip_date",
+    private_metadata: JSON.stringify({ id: rotation.id, channel: channel ?? "" }),
+    title: { type: "plain_text" as const, text: "Skip a Date" },
+    submit: { type: "plain_text" as const, text: "Skip" },
+    close: { type: "plain_text" as const, text: "Cancel" },
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${rotation.name}* — add a date to skip for this rotation. The queue won't advance and the scheduled person will go on the next occurrence.\n\n_Obie company holidays are already skipped automatically._`,
+        },
+      },
+      { type: "divider" },
+      {
+        type: "input",
+        block_id: "skip_from_block",
+        label: { type: "plain_text", text: "From" },
+        element: {
+          type: "datepicker",
+          action_id: "skip_from_picker",
+          initial_date: nextDate,
+          placeholder: { type: "plain_text", text: "Start date" },
+        },
+      },
+      {
+        type: "input",
+        block_id: "skip_to_block",
+        label: { type: "plain_text", text: "To" },
+        hint: {
+          type: "plain_text",
+          text: "Same as 'From' for a single day.",
+        },
+        element: {
+          type: "datepicker",
+          action_id: "skip_to_picker",
+          initial_date: nextDate,
+          placeholder: { type: "plain_text", text: "End date" },
+        },
+      },
+      {
+        type: "input",
+        block_id: "skip_reason_block",
+        label: { type: "plain_text", text: "Reason (optional)" },
+        optional: true,
+        element: {
+          type: "plain_text_input",
+          action_id: "skip_reason_input",
+          placeholder: { type: "plain_text", text: "e.g. Team Onsite" },
+        },
+      },
+      {
+        type: "input",
+        block_id: "skip_emoji_block",
+        label: { type: "plain_text", text: "Emoji (optional)" },
+        hint: {
+          type: "plain_text",
+          text: "Type a Slack emoji name, e.g. :tada: or :office: Defaults to :calendar:",
+        },
+        optional: true,
+        element: {
+          type: "plain_text_input",
+          action_id: "skip_emoji_input",
+          placeholder: { type: "plain_text", text: ":calendar:" },
+        },
+      },
+      ...existingBlocks,
     ],
   };
 }

@@ -45,9 +45,11 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS skip_dates (
-    date  TEXT PRIMARY KEY,  -- YYYY-MM-DD
-    label TEXT NOT NULL,
-    emoji TEXT NOT NULL DEFAULT ':calendar:'
+    date        TEXT NOT NULL,  -- YYYY-MM-DD
+    rotation_id INTEGER,        -- NULL = global (holidays); set = specific rotation only
+    label       TEXT NOT NULL,
+    emoji       TEXT NOT NULL DEFAULT ':calendar:',
+    PRIMARY KEY (date, rotation_id)
   );
 `);
 
@@ -56,6 +58,7 @@ db.exec(`
 for (const col of [
   `ALTER TABLE rotations ADD COLUMN message_template TEXT`,
   `ALTER TABLE rotations ADD COLUMN owners TEXT`,
+  `ALTER TABLE skip_dates ADD COLUMN rotation_id INTEGER`,
 ]) {
   try {
     db.exec(col);

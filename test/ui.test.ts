@@ -86,10 +86,10 @@ describe('buildRotationList', () => {
     expect(json).toContain('open_create_rotation');
   });
 
-  it('includes skip_rotation button', () => {
+  it('includes skip_person in overflow menu', () => {
     const blocks = buildRotationList([makeRotationWithMembers()]);
     const json = JSON.stringify(blocks);
-    expect(json).toContain('skip_rotation');
+    expect(json).toContain('skip_person');
   });
 
   it('includes trigger confirm text', () => {

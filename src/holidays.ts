@@ -36,24 +36,58 @@ export function toDateString(date: Date, timezone: string): string {
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 const _insertSkipDate = db.prepare(`
-  INSERT OR REPLACE INTO skip_dates (date, label, emoji)
-  VALUES (@date, @label, @emoji)
+  INSERT OR REPLACE INTO skip_dates (date, rotation_id, label, emoji)
+  VALUES (@date, @rotation_id, @label, @emoji)
 `);
 
-/** Returns holiday data for a date string (YYYY-MM-DD), or null if not a skip day. */
+/**
+ * Returns holiday/skip data for a date, or null if it's a normal day.
+ * Checks global skip dates (NULL rotation_id) AND rotation-specific ones.
+ */
 export function getSkipDate(
   dateStr: string,
-): { label: string; emoji: string } | null {
-  const result = db
-    .prepare("SELECT label, emoji FROM skip_dates WHERE date = ?")
+  rotationId?: number,
+): { label: string; emoji: string; isHoliday: boolean } | null {
+  // Check global first (holidays)
+  const global = db
+    .prepare("SELECT label, emoji FROM skip_dates WHERE date = ? AND rotation_id IS NULL")
     .get(dateStr) as { label: string; emoji: string } | undefined;
-  return result ?? null;
+  if (global) return { ...global, isHoliday: true };
+
+  // Then check rotation-specific
+  if (rotationId != null) {
+    const specific = db
+      .prepare("SELECT label, emoji FROM skip_dates WHERE date = ? AND rotation_id = ?")
+      .get(dateStr, rotationId) as { label: string; emoji: string } | undefined;
+    if (specific) return { ...specific, isHoliday: false };
+  }
+
+  return null;
 }
 
-/** Returns true if skip_dates already has entries for the given year. */
+/** Returns all rotation-specific skip dates for a rotation, sorted by date. */
+export function getRotationSkipDates(
+  rotationId: number,
+): Array<{ date: string; label: string; emoji: string }> {
+  return db
+    .prepare(
+      "SELECT date, label, emoji FROM skip_dates WHERE rotation_id = ? ORDER BY date ASC",
+    )
+    .all(rotationId) as Array<{ date: string; label: string; emoji: string }>;
+}
+
+/** Removes a specific rotation-specific skip date. */
+export function removeRotationSkipDate(rotationId: number, date: string): void {
+  db.prepare("DELETE FROM skip_dates WHERE rotation_id = ? AND date = ?").run(
+    rotationId,
+    date,
+  );
+}
+
+/** Returns true if global (holiday) skip dates already exist for the given year. */
 export function hasSkipDatesForYear(year: number): boolean {
   const result = db
-    .prepare("SELECT COUNT(*) as count FROM skip_dates WHERE date LIKE ?")
+    .prepare("SELECT COUNT(*) as count FROM skip_dates WHERE date LIKE ? AND rotation_id IS NULL")
     .get(`${year}-%`) as { count: number };
   return result.count > 0;
 }
@@ -81,15 +115,15 @@ export async function refreshHolidaysForYear(year: number): Promise<void> {
 
     const holidays = (await res.json()) as NagerHoliday[];
 
-    // Clear existing dates for this year before repopulating
-    db.prepare("DELETE FROM skip_dates WHERE date LIKE ?").run(`${year}-%`);
+    // Clear existing global holiday dates for this year before repopulating
+    db.prepare("DELETE FROM skip_dates WHERE date LIKE ? AND rotation_id IS NULL").run(`${year}-%`);
 
     let thanksgivingDate: string | null = null;
 
     for (const h of holidays.filter((h) => h.global)) {
       const config = HOLIDAY_CONFIG[h.name];
       if (config) {
-        _insertSkipDate.run({ date: h.date, label: config.label, emoji: config.emoji });
+        _insertSkipDate.run({ date: h.date, rotation_id: null, label: config.label, emoji: config.emoji });
         if (h.name === "Thanksgiving Day") thanksgivingDate = h.date;
       }
     }
@@ -100,6 +134,7 @@ export async function refreshHolidaysForYear(year: number): Promise<void> {
       d.setUTCDate(d.getUTCDate() + 1);
       _insertSkipDate.run({
         date: d.toISOString().slice(0, 10),
+        rotation_id: null,
         label: "Black Friday",
         emoji: ":shopping_bags:",
       });
@@ -108,12 +143,13 @@ export async function refreshHolidaysForYear(year: number): Promise<void> {
     // Christmas Eve — always Dec 24
     _insertSkipDate.run({
       date: `${year}-12-24`,
+      rotation_id: null,
       label: "Christmas Eve",
       emoji: ":santa::skin-tone-3:",
     });
 
     const countResult = db
-      .prepare("SELECT COUNT(*) as count FROM skip_dates WHERE date LIKE ?")
+      .prepare("SELECT COUNT(*) as count FROM skip_dates WHERE date LIKE ? AND rotation_id IS NULL")
       .get(`${year}-%`) as { count: number };
     console.log(`Holidays loaded for ${year} (${countResult.count} dates).`);
   } catch (err) {
@@ -125,8 +161,8 @@ export async function refreshHolidaysForYear(year: number): Promise<void> {
 
 export interface FiringDateEntry {
   date: Date;
-  /** null = normal rotation day; non-null = holiday, will be skipped */
-  holiday: { label: string; emoji: string } | null;
+  /** null = normal rotation day; non-null = will be skipped */
+  holiday: { label: string; emoji: string; isHoliday: boolean } | null;
 }
 
 /**
@@ -149,13 +185,13 @@ export function getAnnotatedFiringDates(
 
     const results: FiringDateEntry[] = [];
     let personSlotsFilled = 0;
-    // Cap at personCount + 30 to handle up to 30 consecutive holidays
+    // Cap at personCount + 30 to handle up to 30 consecutive holidays/skips
     const maxIterations = personCount + 30;
 
     for (let i = 0; i < maxIterations && personSlotsFilled < personCount; i++) {
       const date = interval.next().toDate();
       const dateStr = toDateString(date, rotation.timezone);
-      const holiday = getSkipDate(dateStr);
+      const holiday = getSkipDate(dateStr, rotation.id);
 
       results.push({ date, holiday });
       if (!holiday) personSlotsFilled++;

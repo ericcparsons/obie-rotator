@@ -9,8 +9,9 @@ const tomorrow = new Date();
 tomorrow.setDate(tomorrow.getDate() + 1);
 const date = tomorrow.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
-db.prepare('INSERT OR REPLACE INTO skip_dates (date, label, emoji) VALUES (?, ?, ?)')
-  .run(date, 'Test Holiday', ':tada:');
+// NULL rotation_id = global (affects all rotations, like a real holiday)
+db.prepare('INSERT OR REPLACE INTO skip_dates (date, rotation_id, label, emoji) VALUES (?, ?, ?, ?)')
+  .run(date, null, 'Test Holiday', ':tada:');
 
 console.log(`✅ Inserted test holiday for ${date}`);
 console.log('Now hit ▶ Trigger now in Slack — it should skip and log the holiday.');
