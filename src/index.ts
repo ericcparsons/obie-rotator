@@ -318,9 +318,13 @@ app.action("rotation_overflow", async ({ ack, body, client, respond }) => {
       ? toDateString(entries[0].date, rotation.timezone)
       : new Date().toISOString().slice(0, 10);
     const existingSkips = getRotationSkipDates(rotation.id);
+    const ownedRotations = listRotationsOwnedBy(body.user.id).map((r) => ({
+      id: r.id,
+      name: r.name,
+    }));
     await client.views.open({
       trigger_id: b.trigger_id,
-      view: buildSkipDateModal({ rotation, nextDate, channel, existingSkips }),
+      view: buildSkipDateModal({ rotation, nextDate, channel, existingSkips, ownedRotations }),
     });
 
   } else if (action === "skip_person") {
@@ -464,14 +468,25 @@ app.view("skip_date", async ({ ack, body, view }) => {
 
   const reason: string = view.state.values.skip_reason_block?.skip_reason_input?.value?.trim() || "Skipped";
   const emoji: string = view.state.values.skip_emoji_block?.skip_emoji_input?.value?.trim() || ":calendar:";
+
+  // Which rotations to apply the skip to (defaults to just this one)
+  const selectedOptions: Array<{ value: string }> =
+    view.state.values.skip_rotations_block?.skip_rotations_select?.selected_options ?? [];
+  const targetRotationIds: number[] =
+    selectedOptions.length > 0
+      ? selectedOptions.map((o) => parseInt(o.value, 10))
+      : [rotationId];
+
   const stmt = db.prepare("INSERT OR REPLACE INTO skip_dates (date, rotation_id, label, emoji) VALUES (?, ?, ?, ?)");
 
-  // Insert every date in the range
-  const current = new Date(`${fromDate}T12:00:00Z`);
-  const end = new Date(`${toDate}T12:00:00Z`);
-  while (current <= end) {
-    stmt.run(current.toISOString().slice(0, 10), rotationId, reason, emoji);
-    current.setUTCDate(current.getUTCDate() + 1);
+  // Insert every date in the range for each selected rotation
+  for (const targetId of targetRotationIds) {
+    const current = new Date(`${fromDate}T12:00:00Z`);
+    const end = new Date(`${toDate}T12:00:00Z`);
+    while (current <= end) {
+      stmt.run(current.toISOString().slice(0, 10), targetId, reason, emoji);
+      current.setUTCDate(current.getUTCDate() + 1);
+    }
   }
 
   await refreshList(body.user.id, channel ?? "");

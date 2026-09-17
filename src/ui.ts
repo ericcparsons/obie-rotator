@@ -601,8 +601,10 @@ export function buildSkipDateModal(opts: {
   channel?: string;
   /** Existing rotation-specific skip dates to display */
   existingSkips?: Array<{ date: string; label: string; emoji: string }>;
+  /** All rotations the user owns, for the multi-select */
+  ownedRotations?: Array<{ id: number; name: string }>;
 }) {
-  const { rotation, nextDate, channel, existingSkips = [] } = opts;
+  const { rotation, nextDate, channel, existingSkips = [], ownedRotations = [] } = opts;
 
   const existingBlocks =
     existingSkips.length > 0
@@ -646,6 +648,28 @@ export function buildSkipDateModal(opts: {
         },
       },
       { type: "divider" },
+      // ── Apply to rotations ───────────────────────────────────────
+      ...(ownedRotations.length > 1
+        ? [
+            {
+              type: "input",
+              block_id: "skip_rotations_block",
+              label: { type: "plain_text", text: "Apply to rotations" },
+              hint: {
+                type: "plain_text",
+                text: "Defaults to this rotation. Select additional rotations to skip the same dates.",
+              },
+              element: {
+                type: "multi_static_select",
+                action_id: "skip_rotations_select",
+                options: ownedRotations.map((r) =>
+                  optionFor(r.name, String(r.id)),
+                ),
+                initial_options: [optionFor(rotation.name, String(rotation.id))],
+              },
+            },
+          ]
+        : []),
       {
         type: "input",
         block_id: "skip_from_block",
