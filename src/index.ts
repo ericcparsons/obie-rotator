@@ -550,6 +550,18 @@ app.action("remove_skip_date", async ({ ack, body, client }) => {
   });
 });
 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+process.on("SIGTERM", () => {
+  console.log("Received SIGTERM — shutting down gracefully.");
+  process.exit(0);
+});
+
+process.on("SIGINT", () => {
+  console.log("Received SIGINT — shutting down gracefully.");
+  process.exit(0);
+});
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 (async () => {
