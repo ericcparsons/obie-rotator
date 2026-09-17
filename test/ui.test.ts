@@ -83,10 +83,6 @@ describe('buildMainMenu', () => {
   it('includes create rotation button', () => {
     expect(JSON.stringify(buildMainMenu())).toContain('open_create_rotation');
   });
-
-  it('includes skip a date button', () => {
-    expect(JSON.stringify(buildMainMenu())).toContain('open_skip_date_global');
-  });
 });
 
 describe('buildRotationList', () => {
@@ -94,6 +90,11 @@ describe('buildRotationList', () => {
     const blocks = buildRotationList([makeRotationWithMembers()]);
     const json = JSON.stringify(blocks);
     expect(json).toContain('open_create_rotation');
+  });
+
+  it('includes skip a date button', () => {
+    const blocks = buildRotationList([makeRotationWithMembers()]);
+    expect(JSON.stringify(blocks)).toContain('open_skip_date_global');
   });
 
   it('includes skip_person in overflow menu', () => {

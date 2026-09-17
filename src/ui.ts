@@ -91,11 +91,6 @@ export function buildMainMenu() {
           text: { type: "plain_text", text: "📋 List rotations" },
           action_id: "open_list_rotations",
         },
-        {
-          type: "button",
-          text: { type: "plain_text", text: "📅 Skip a date" },
-          action_id: "open_skip_date_global",
-        },
       ],
     },
   ];
@@ -131,6 +126,11 @@ export function buildRotationList(
           text: { type: "plain_text", text: "➕ Create rotation" },
           action_id: "open_create_rotation",
           style: "primary",
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "📅 Skip a date" },
+          action_id: "open_skip_date_global",
         },
       ],
     },
