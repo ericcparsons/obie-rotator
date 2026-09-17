@@ -91,6 +91,11 @@ export function buildMainMenu() {
           text: { type: "plain_text", text: "📋 List rotations" },
           action_id: "open_list_rotations",
         },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "📅 Skip a date" },
+          action_id: "open_skip_date_global",
+        },
       ],
     },
   ];
@@ -603,8 +608,10 @@ export function buildSkipDateModal(opts: {
   existingSkips?: Array<{ date: string; label: string; emoji: string }>;
   /** All rotations the user owns, for the multi-select */
   ownedRotations?: Array<{ id: number; name: string }>;
+  /** Pre-select all owned rotations (used when opened from the global menu) */
+  preSelectAll?: boolean;
 }) {
-  const { rotation, nextDate, channel, existingSkips = [], ownedRotations = [] } = opts;
+  const { rotation, nextDate, channel, existingSkips = [], ownedRotations = [], preSelectAll = false } = opts;
 
   const existingBlocks =
     existingSkips.length > 0
@@ -665,7 +672,9 @@ export function buildSkipDateModal(opts: {
                 options: ownedRotations.map((r) =>
                   optionFor(r.name, String(r.id)),
                 ),
-                initial_options: [optionFor(rotation.name, String(rotation.id))],
+                initial_options: preSelectAll
+                  ? ownedRotations.map((r) => optionFor(r.name, String(r.id)))
+                  : [optionFor(rotation.name, String(rotation.id))],
               },
             },
           ]

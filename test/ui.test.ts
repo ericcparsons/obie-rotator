@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseModalValues, parsePrivateMeta, buildRotationModal, buildRotationList } from '../src/ui.js';
+import { parseModalValues, parsePrivateMeta, buildRotationModal, buildRotationList, buildMainMenu } from '../src/ui.js';
 import { DEFAULT_MESSAGE_TEMPLATE } from '../src/db.js';
 import type { Rotation, Member } from '../src/db.js';
 
@@ -78,6 +78,16 @@ function makeRotationWithMembers(overrides: Partial<Rotation> = {}): Rotation & 
     ...overrides,
   };
 }
+
+describe('buildMainMenu', () => {
+  it('includes create rotation button', () => {
+    expect(JSON.stringify(buildMainMenu())).toContain('open_create_rotation');
+  });
+
+  it('includes skip a date button', () => {
+    expect(JSON.stringify(buildMainMenu())).toContain('open_skip_date_global');
+  });
+});
 
 describe('buildRotationList', () => {
   it('includes open_create_rotation button', () => {

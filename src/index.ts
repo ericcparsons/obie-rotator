@@ -161,6 +161,32 @@ app.command("/rotation-status", async ({ command, ack, respond }) => {
   } as RespondArguments);
 });
 
+// ── Action: open skip date modal (global — from main menu) ───────────────────
+
+app.action("open_skip_date_global", async ({ ack, body, client }) => {
+  await ack();
+
+  const ownedRotations = listRotationsOwnedBy(body.user.id);
+  if (ownedRotations.length === 0) return;
+
+  // Use today as the default date since there's no single rotation in context
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Pre-select all owned rotations
+  const firstRotation = ownedRotations[0];
+
+  await client.views.open({
+    trigger_id: (body as { trigger_id: string }).trigger_id,
+    view: buildSkipDateModal({
+      rotation: firstRotation,
+      nextDate: today,
+      ownedRotations: ownedRotations.map((r) => ({ id: r.id, name: r.name })),
+      existingSkips: [],
+      preSelectAll: true,
+    }),
+  });
+});
+
 // ── Action: open create modal ─────────────────────────────────────────────────
 
 app.action("open_create_rotation", async ({ ack, body, client }) => {
