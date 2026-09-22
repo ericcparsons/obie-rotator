@@ -73,6 +73,27 @@ for (const col of [
   }
 }
 
+// Migration: fix skip_dates primary key from (date) to (date, rotation_id).
+// SQLite can't ALTER a primary key, so we recreate the table.
+const skipDatesPk = db
+  .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='skip_dates'`)
+  .get() as { sql: string } | undefined;
+if (skipDatesPk && !skipDatesPk.sql.includes("PRIMARY KEY (date, rotation_id)")) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS skip_dates_new (
+      date        TEXT NOT NULL,
+      rotation_id INTEGER,
+      label       TEXT NOT NULL,
+      emoji       TEXT NOT NULL DEFAULT ':calendar:',
+      PRIMARY KEY (date, rotation_id)
+    );
+    INSERT OR IGNORE INTO skip_dates_new SELECT date, rotation_id, label, emoji FROM skip_dates;
+    DROP TABLE skip_dates;
+    ALTER TABLE skip_dates_new RENAME TO skip_dates;
+  `);
+  console.log("Migrated skip_dates to composite primary key (date, rotation_id).");
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export const DEFAULT_MESSAGE_TEMPLATE =

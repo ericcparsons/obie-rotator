@@ -534,8 +534,8 @@ app.view("skip_date", async ({ ack, body, view }) => {
     }
   }
 
-  // Checkpoint WAL to main DB file so data survives a container restart
-  try { db.exec("PRAGMA wal_checkpoint(FULL)"); } catch { /* ignore */ }
+  // Truncate WAL into main DB file so data is visible to other processes/containers
+  try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* ignore */ }
 
   await refreshList(body.user.id, channel ?? "");
 });
