@@ -535,7 +535,13 @@ app.view("skip_date", async ({ ack, body, view }) => {
     const current = new Date(`${fromDate}T12:00:00Z`);
     const end = new Date(`${toDate}T12:00:00Z`);
     while (current <= end) {
-      stmt.run(current.toISOString().slice(0, 10), targetId, reason, emoji);
+      const dateStr = current.toISOString().slice(0, 10);
+      try {
+        const result = stmt.run(dateStr, targetId, reason, emoji);
+        console.log(`[skip_date] Inserted rotation_id: ${targetId}, date: ${dateStr}, changes: ${result.changes}`);
+      } catch (err) {
+        console.error(`[skip_date] Insert FAILED rotation_id: ${targetId}, date: ${dateStr}:`, err);
+      }
       current.setUTCDate(current.getUTCDate() + 1);
     }
   }
