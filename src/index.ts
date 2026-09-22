@@ -50,13 +50,18 @@ async function refreshList(
 ): Promise<void> {
   if (!channelId) return;
   const rotations = listRotationsOwnedBy(userId);
-  await app.client.chat.postEphemeral({
-    channel: channelId,
-    user: userId,
-    text: "Rotations",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    blocks: buildRotationList(rotations) as any,
-  });
+  try {
+    await app.client.chat.postEphemeral({
+      channel: channelId,
+      user: userId,
+      text: "Rotations",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      blocks: buildRotationList(rotations) as any,
+    });
+  } catch (err) {
+    // channel_not_found can happen with ephemeral action contexts — log and move on
+    console.warn("[refreshList] Could not post ephemeral:", (err as Error).message);
+  }
 }
 
 function validateRotationForm(
