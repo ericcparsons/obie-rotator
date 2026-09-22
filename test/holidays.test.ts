@@ -6,6 +6,9 @@ import {
   hasSkipDatesForYear,
   refreshHolidaysForYear,
   getAnnotatedFiringDates,
+  getRotationSkipDates,
+  getSkipDatesForRotations,
+  removeRotationSkipDateRange,
 } from "../src/holidays.js";
 import { db } from "../src/db.js";
 import type { Rotation } from "../src/db.js";
@@ -210,6 +213,104 @@ describe("getSkipDate rotation-specific", () => {
     insertSkipDate("2026-12-25", "Christmas Day", ":christmas_tree:", null);
     insertSkipDate("2026-12-25", "Team Onsite", ":office:", 1);
     expect(getSkipDate("2026-12-25", 1)).toEqual({ label: "Christmas Day", emoji: ":christmas_tree:", isHoliday: true });
+  });
+});
+
+// ── getRotationSkipDates ──────────────────────────────────────────────────────
+
+describe("getRotationSkipDates", () => {
+  beforeEach(clearSkipDates);
+
+  it("includes rotation_id in results", () => {
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    const results = getRotationSkipDates(1);
+    expect(results[0].rotation_id).toBe(1);
+  });
+
+  it("returns only dates for the given rotation", () => {
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 2);
+    const results = getRotationSkipDates(1);
+    expect(results).toHaveLength(1);
+    expect(results[0].rotation_id).toBe(1);
+  });
+
+  it("returns dates sorted ascending", () => {
+    insertSkipDate("2026-10-16", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-15", "Onsite", ":office:", 1);
+    const dates = getRotationSkipDates(1).map((r) => r.date);
+    expect(dates).toEqual(["2026-10-14", "2026-10-15", "2026-10-16"]);
+  });
+});
+
+// ── getSkipDatesForRotations ──────────────────────────────────────────────────
+
+describe("getSkipDatesForRotations", () => {
+  beforeEach(clearSkipDates);
+
+  it("returns skip dates across multiple rotations", () => {
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 2);
+    const results = getSkipDatesForRotations([1, 2]);
+    expect(results).toHaveLength(2);
+  });
+
+  it("returns empty array when no skip dates exist", () => {
+    expect(getSkipDatesForRotations([1, 2])).toHaveLength(0);
+  });
+
+  it("returns empty array for empty input", () => {
+    expect(getSkipDatesForRotations([])).toHaveLength(0);
+  });
+
+  it("excludes global (null) skip dates", () => {
+    insertSkipDate("2026-12-25", "Christmas", ":christmas_tree:", null);
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    const results = getSkipDatesForRotations([1]);
+    expect(results).toHaveLength(1);
+    expect(results[0].date).toBe("2026-10-14");
+  });
+});
+
+// ── removeRotationSkipDateRange ───────────────────────────────────────────────
+
+describe("removeRotationSkipDateRange", () => {
+  beforeEach(clearSkipDates);
+
+  it("removes all dates in a range", () => {
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-15", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-16", "Onsite", ":office:", 1);
+    removeRotationSkipDateRange(1, "2026-10-14", "2026-10-16");
+    expect(getRotationSkipDates(1)).toHaveLength(0);
+  });
+
+  it("removes a single date when from and to are the same", () => {
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-15", "Onsite", ":office:", 1);
+    removeRotationSkipDateRange(1, "2026-10-14", "2026-10-14");
+    const remaining = getRotationSkipDates(1);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].date).toBe("2026-10-15");
+  });
+
+  it("does not affect other rotations on the same dates", () => {
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 1);
+    insertSkipDate("2026-10-14", "Onsite", ":office:", 2);
+    removeRotationSkipDateRange(1, "2026-10-14", "2026-10-14");
+    expect(getRotationSkipDates(1)).toHaveLength(0);
+    expect(getRotationSkipDates(2)).toHaveLength(1);
+  });
+
+  it("does not affect global holidays on the same dates", () => {
+    insertSkipDate("2026-12-25", "Christmas", ":christmas_tree:", null);
+    removeRotationSkipDateRange(1, "2026-12-25", "2026-12-25");
+    expect(getSkipDate("2026-12-25")).toEqual({
+      label: "Christmas",
+      emoji: ":christmas_tree:",
+      isHoliday: true,
+    });
   });
 });
 

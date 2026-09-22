@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseModalValues, parsePrivateMeta, buildRotationModal, buildRotationList, buildMainMenu } from '../src/ui.js';
+import { parseModalValues, parsePrivateMeta, buildRotationModal, buildRotationList, buildMainMenu, buildSkipDateModal } from '../src/ui.js';
 import { DEFAULT_MESSAGE_TEMPLATE } from '../src/db.js';
 import type { Rotation, Member } from '../src/db.js';
 
@@ -113,6 +113,80 @@ describe('buildRotationList', () => {
     const blocks = buildRotationList([]);
     const json = JSON.stringify(blocks);
     expect(json).toContain('Create rotation');
+  });
+});
+
+// ── buildSkipDateModal — grouping ─────────────────────────────────────────────
+
+function baseRotation() {
+  return {
+    id: 1, name: 'Standup', channel: 'C123', cadence: 'daily' as const,
+    days: null, day_of_month: null, hour: 10, minute: 0,
+    timezone: 'America/New_York', message_template: null, owners: null,
+    current_index: 0, created_at: '2026-01-01',
+  };
+}
+
+describe('buildSkipDateModal — skip date grouping', () => {
+  it('groups 3 consecutive dates into one range row', () => {
+    const modal = buildSkipDateModal({
+      rotation: baseRotation(),
+      nextDate: '2026-11-01',
+      existingSkips: [
+        { date: '2026-10-14', label: 'Onsite', emoji: ':office:', rotation_id: 1 },
+        { date: '2026-10-15', label: 'Onsite', emoji: ':office:', rotation_id: 1 },
+        { date: '2026-10-16', label: 'Onsite', emoji: ':office:', rotation_id: 1 },
+      ],
+    });
+    const json = JSON.stringify(modal);
+    // Should show a range, not 3 separate rows
+    expect(json).toContain('2026-10-14');
+    expect(json).toContain('2026-10-16');
+    // value is double-encoded JSON — check escaped versions
+    expect(json).toContain('\\"fromDate\\":\\"2026-10-14\\"');
+    expect(json).toContain('\\"toDate\\":\\"2026-10-16\\"');
+    // Should only have one remove button for all 3 dates
+    const removeCount = (json.match(/remove_skip_date/g) ?? []).length;
+    expect(removeCount).toBe(1);
+  });
+
+  it('keeps non-consecutive dates as separate rows', () => {
+    const modal = buildSkipDateModal({
+      rotation: baseRotation(),
+      nextDate: '2026-11-01',
+      existingSkips: [
+        { date: '2026-10-14', label: 'Onsite', emoji: ':office:', rotation_id: 1 },
+        { date: '2026-10-16', label: 'Onsite', emoji: ':office:', rotation_id: 1 }, // gap on 15th
+      ],
+    });
+    const removeCount = (JSON.stringify(modal).match(/remove_skip_date/g) ?? []).length;
+    expect(removeCount).toBe(2);
+  });
+
+  it('keeps dates with different labels as separate rows', () => {
+    const modal = buildSkipDateModal({
+      rotation: baseRotation(),
+      nextDate: '2026-11-01',
+      existingSkips: [
+        { date: '2026-10-14', label: 'Onsite', emoji: ':office:', rotation_id: 1 },
+        { date: '2026-10-15', label: 'Conference', emoji: ':microphone:', rotation_id: 1 },
+      ],
+    });
+    const removeCount = (JSON.stringify(modal).match(/remove_skip_date/g) ?? []).length;
+    expect(removeCount).toBe(2);
+  });
+
+  it('uses the actual rotation_id from each skip entry in the remove value', () => {
+    const modal = buildSkipDateModal({
+      rotation: baseRotation(), // rotation.id = 1
+      nextDate: '2026-11-01',
+      existingSkips: [
+        { date: '2026-10-14', label: 'Onsite', emoji: ':office:', rotation_id: 2 }, // different rotation!
+      ],
+    });
+    const json = JSON.stringify(modal);
+    // Remove button should use rotation_id: 2 not rotation.id (1) — value is double-encoded
+    expect(json).toContain('\\"rotationId\\":2');
   });
 });
 

@@ -68,12 +68,12 @@ export function getSkipDate(
 /** Returns all rotation-specific skip dates for a rotation, sorted by date. */
 export function getRotationSkipDates(
   rotationId: number,
-): Array<{ date: string; label: string; emoji: string }> {
+): Array<{ date: string; label: string; emoji: string; rotation_id: number }> {
   return db
     .prepare(
-      "SELECT date, label, emoji FROM skip_dates WHERE rotation_id = ? ORDER BY date ASC",
+      "SELECT date, label, emoji, rotation_id FROM skip_dates WHERE rotation_id = ? ORDER BY date ASC",
     )
-    .all(rotationId) as Array<{ date: string; label: string; emoji: string }>;
+    .all(rotationId) as Array<{ date: string; label: string; emoji: string; rotation_id: number }>;
 }
 
 /** Returns all rotation-specific skip dates across multiple rotations, sorted by date. */
@@ -89,12 +89,15 @@ export function getSkipDatesForRotations(
     .all(...rotationIds) as Array<{ date: string; label: string; emoji: string; rotation_id: number }>;
 }
 
-/** Removes a specific rotation-specific skip date. */
-export function removeRotationSkipDate(rotationId: number, date: string): void {
-  db.prepare("DELETE FROM skip_dates WHERE rotation_id = ? AND date = ?").run(
-    rotationId,
-    date,
-  );
+/** Removes all rotation-specific skip dates in a date range (inclusive). */
+export function removeRotationSkipDateRange(
+  rotationId: number,
+  fromDate: string,
+  toDate: string,
+): void {
+  db.prepare(
+    "DELETE FROM skip_dates WHERE rotation_id = ? AND date >= ? AND date <= ?",
+  ).run(rotationId, fromDate, toDate);
 }
 
 /** Returns true if global (holiday) skip dates already exist for the given year. */

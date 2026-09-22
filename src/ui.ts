@@ -605,7 +605,7 @@ export function buildSkipDateModal(opts: {
   nextDate: string;
   channel?: string;
   /** Existing rotation-specific skip dates to display */
-  existingSkips?: Array<{ date: string; label: string; emoji: string }>;
+  existingSkips?: Array<{ date: string; label: string; emoji: string; rotation_id: number }>;
   /** All rotations the user owns, for the multi-select */
   ownedRotations?: Array<{ id: number; name: string }>;
   /** Pre-select all owned rotations (used when opened from the global menu) */
@@ -613,29 +613,74 @@ export function buildSkipDateModal(opts: {
 }) {
   const { rotation, nextDate, channel, existingSkips = [], ownedRotations = [], preSelectAll = false } = opts;
 
+  // Group consecutive dates with the same label+emoji into ranges
+  interface SkipGroup {
+    rotationId: number;
+    fromDate: string;
+    toDate: string;
+    label: string;
+    emoji: string;
+  }
+
+  const skipGroups: SkipGroup[] = [];
+  for (const s of existingSkips) {
+    const last = skipGroups[skipGroups.length - 1];
+    const prevDay = last
+      ? new Date(new Date(`${last.toDate}T12:00:00Z`).getTime() + 86400000)
+          .toISOString()
+          .slice(0, 10)
+      : null;
+    if (
+      last &&
+      last.rotationId === s.rotation_id &&
+      last.label === s.label &&
+      last.emoji === s.emoji &&
+      prevDay === s.date
+    ) {
+      last.toDate = s.date;
+    } else {
+      skipGroups.push({
+        rotationId: s.rotation_id,
+        fromDate: s.date,
+        toDate: s.date,
+        label: s.label,
+        emoji: s.emoji,
+      });
+    }
+  }
+
   const existingBlocks =
-    existingSkips.length > 0
+    skipGroups.length > 0
       ? [
           { type: "divider" },
           {
             type: "section",
             text: { type: "mrkdwn", text: "*Existing skip dates*" },
           },
-          ...existingSkips.map((s) => ({
-            type: "section",
-            text: {
-              type: "mrkdwn",
-              text: `${s.emoji} *${s.date}* — ${s.label}`,
-            },
-            accessory: {
-              type: "button",
-              text: { type: "plain_text", text: "Remove" },
-              action_id: "remove_skip_date",
-              // encode rotation_id + date so the handler knows what to delete
-              value: JSON.stringify({ rotationId: rotation.id, date: s.date }),
-              style: "danger",
-            },
-          })),
+          ...skipGroups.map((g) => {
+            const dateDisplay =
+              g.fromDate === g.toDate
+                ? `*${g.fromDate}*`
+                : `*${g.fromDate}* – *${g.toDate}*`;
+            return {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `${g.emoji} ${dateDisplay} — ${g.label}`,
+              },
+              accessory: {
+                type: "button",
+                text: { type: "plain_text", text: "Remove" },
+                action_id: "remove_skip_date",
+                value: JSON.stringify({
+                  rotationId: g.rotationId,
+                  fromDate: g.fromDate,
+                  toDate: g.toDate,
+                }),
+                style: "danger",
+              },
+            };
+          }),
         ]
       : [];
 

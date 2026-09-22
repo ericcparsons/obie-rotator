@@ -13,7 +13,7 @@ import {
   getAnnotatedFiringDates,
   getRotationSkipDates,
   getSkipDatesForRotations,
-  removeRotationSkipDate,
+  removeRotationSkipDateRange,
   toDateString,
 } from "./holidays.js";
 import {
@@ -539,28 +539,46 @@ app.action("remove_skip_date", async ({ ack, body, client }) => {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const b = body as any;
-  const { rotationId, date } = JSON.parse(b.actions[0].value as string) as {
-    rotationId: number;
-    date: string;
-  };
+  const { rotationId, fromDate, toDate } = JSON.parse(
+    b.actions[0].value as string,
+  ) as { rotationId: number; fromDate: string; toDate: string };
 
-  removeRotationSkipDate(rotationId, date);
+  removeRotationSkipDateRange(rotationId, fromDate, toDate);
 
-  // Refresh the modal to reflect the removal
-  const rotation = getRotation(rotationId);
-  if (!rotation) return;
+  // Rebuild the modal with updated skip dates across all owned rotations
+  const { id: modalRotationId, channel } = parsePrivateMeta(b.view.private_metadata);
+  const anchorRotationId = modalRotationId ?? rotationId;
+  const anchorRotation = getRotation(anchorRotationId);
+  if (!anchorRotation) return;
 
-  const { channel } = parsePrivateMeta(b.view.private_metadata);
-  const entries = getAnnotatedFiringDates(rotation, 1);
+  const ownedRotations = listRotationsOwnedBy(body.user.id).map((r) => ({
+    id: r.id,
+    name: r.name,
+  }));
+  const allSkips = getSkipDatesForRotations(ownedRotations.map((r) => r.id));
+  const seen = new Set<string>();
+  const existingSkips = allSkips.filter((s) => {
+    const key = `${s.date}:${s.label}:${s.rotation_id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const entries = getAnnotatedFiringDates(anchorRotation, 1);
   const nextDate = entries[0]
-    ? toDateString(entries[0].date, rotation.timezone)
+    ? toDateString(entries[0].date, anchorRotation.timezone)
     : new Date().toISOString().slice(0, 10);
-  const existingSkips = getRotationSkipDates(rotationId);
 
   await client.views.update({
     view_id: b.view.id,
     hash: b.view.hash,
-    view: buildSkipDateModal({ rotation, nextDate, channel, existingSkips }),
+    view: buildSkipDateModal({
+      rotation: anchorRotation,
+      nextDate,
+      channel,
+      ownedRotations,
+      existingSkips,
+    }),
   });
 });
 
