@@ -546,6 +546,9 @@ app.view("skip_date", async ({ ack, body, view }) => {
     }
   }
 
+  // Force DB flush to disk before responding
+  db.exec("PRAGMA wal_checkpoint(FULL)");
+
   await refreshList(body.user.id, channel ?? "");
 });
 

@@ -7,7 +7,8 @@ fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
 export const db = new DatabaseSync(dbPath);
 
-db.exec(`PRAGMA journal_mode = WAL`);
+db.exec(`PRAGMA journal_mode = DELETE`);
+db.exec(`PRAGMA synchronous = FULL`);
 db.exec(`PRAGMA foreign_keys = ON`);
 
 db.exec(`
