@@ -48,6 +48,42 @@ describe('parsePrivateMeta', () => {
 
 // ── buildRotationModal private_metadata ───────────────────────────────────────
 
+describe('parsePrivateMeta — rotationIds', () => {
+  it('parses rotationIds from JSON metadata', () => {
+    const meta = JSON.stringify({ id: 1, channel: 'C123', rotationIds: [1, 2] });
+    expect(parsePrivateMeta(meta)).toEqual({ id: 1, channel: 'C123', rotationIds: [1, 2] });
+  });
+
+  it('returns undefined rotationIds for legacy format', () => {
+    const result = parsePrivateMeta('5');
+    expect(result.rotationIds).toBeUndefined();
+  });
+});
+
+describe('buildSkipDateModal — private_metadata rotationIds', () => {
+  it('stores all owned rotation IDs when preSelectAll is true', () => {
+    const modal = buildSkipDateModal({
+      rotation: baseRotation(),
+      nextDate: '2026-11-01',
+      ownedRotations: [{ id: 1, name: 'Standup' }, { id: 2, name: 'New Issues' }],
+      preSelectAll: true,
+    });
+    const meta = JSON.parse(modal.private_metadata);
+    expect(meta.rotationIds).toEqual([1, 2]);
+  });
+
+  it('stores only the current rotation ID when not preSelectAll', () => {
+    const modal = buildSkipDateModal({
+      rotation: baseRotation(), // id: 1
+      nextDate: '2026-11-01',
+      ownedRotations: [{ id: 1, name: 'Standup' }, { id: 2, name: 'New Issues' }],
+      preSelectAll: false,
+    });
+    const meta = JSON.parse(modal.private_metadata);
+    expect(meta.rotationIds).toEqual([1]);
+  });
+});
+
 describe('buildRotationModal', () => {
   it('stores id and channel as JSON in private_metadata', () => {
     const modal = buildRotationModal({

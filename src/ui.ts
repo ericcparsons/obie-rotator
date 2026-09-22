@@ -447,14 +447,13 @@ export function buildRotationModal(opts: {
  *   - plain number string, legacy (edit modal before channel was threaded)
  *   - JSON { id, channel } (current format)
  */
-export function parsePrivateMeta(meta: string): { id?: number; channel?: string } {
+export function parsePrivateMeta(meta: string): { id?: number; channel?: string; rotationIds?: number[] } {
   if (!meta) return {};
   try {
     const parsed = JSON.parse(meta);
     if (typeof parsed === 'object' && parsed !== null) {
-      return parsed as { id: number; channel: string };
+      return parsed as { id: number; channel: string; rotationIds?: number[] };
     }
-    // JSON.parse('7') returns a number — fall through to parseInt
   } catch { /* not JSON */ }
   const id = parseInt(meta, 10);
   return Number.isFinite(id) ? { id } : {};
@@ -687,7 +686,14 @@ export function buildSkipDateModal(opts: {
   return {
     type: "modal" as const,
     callback_id: "skip_date",
-    private_metadata: JSON.stringify({ id: rotation.id, channel: channel ?? "" }),
+    private_metadata: JSON.stringify({
+      id: rotation.id,
+      channel: channel ?? "",
+      // Store all rotation IDs that should be skipped by default (preSelectAll case)
+      rotationIds: preSelectAll
+        ? ownedRotations.map((r) => r.id)
+        : [rotation.id],
+    }),
     title: { type: "plain_text" as const, text: "Skip a Date" },
     submit: { type: "plain_text" as const, text: "Skip" },
     close: { type: "plain_text" as const, text: "Cancel" },
