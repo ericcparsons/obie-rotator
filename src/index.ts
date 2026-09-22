@@ -510,8 +510,6 @@ app.view("skip_date", async ({ ack, body, view }) => {
   const emoji: string = view.state.values.skip_emoji_block?.skip_emoji_input?.value?.trim() || ":calendar:";
 
   // Which rotations to apply the skip to.
-  // Prefer what the user explicitly selected, then fall back to the rotation IDs
-  // stored in private_metadata (set when modal opened), then the anchor rotation.
   const { rotationIds: defaultRotationIds } = parsePrivateMeta(view.private_metadata);
   const selectedOptions: Array<{ value: string }> =
     view.state.values.skip_rotations_block?.skip_rotations_select?.selected_options ?? [];
@@ -519,6 +517,11 @@ app.view("skip_date", async ({ ack, body, view }) => {
     selectedOptions.length > 0
       ? selectedOptions.map((o) => parseInt(o.value, 10))
       : (defaultRotationIds ?? [rotationId ?? 0]).filter(Boolean);
+
+  console.log("[skip_date] private_metadata:", view.private_metadata);
+  console.log("[skip_date] selectedOptions:", JSON.stringify(selectedOptions));
+  console.log("[skip_date] defaultRotationIds:", defaultRotationIds);
+  console.log("[skip_date] targetRotationIds:", targetRotationIds);
 
   const stmt = db.prepare("INSERT OR REPLACE INTO skip_dates (date, rotation_id, label, emoji) VALUES (?, ?, ?, ?)");
 
