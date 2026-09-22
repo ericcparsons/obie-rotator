@@ -76,6 +76,19 @@ export function getRotationSkipDates(
     .all(rotationId) as Array<{ date: string; label: string; emoji: string }>;
 }
 
+/** Returns all rotation-specific skip dates across multiple rotations, sorted by date. */
+export function getSkipDatesForRotations(
+  rotationIds: number[],
+): Array<{ date: string; label: string; emoji: string; rotation_id: number }> {
+  if (rotationIds.length === 0) return [];
+  const placeholders = rotationIds.map(() => "?").join(",");
+  return db
+    .prepare(
+      `SELECT date, label, emoji, rotation_id FROM skip_dates WHERE rotation_id IN (${placeholders}) ORDER BY date ASC`,
+    )
+    .all(...rotationIds) as Array<{ date: string; label: string; emoji: string; rotation_id: number }>;
+}
+
 /** Removes a specific rotation-specific skip date. */
 export function removeRotationSkipDate(rotationId: number, date: string): void {
   db.prepare("DELETE FROM skip_dates WHERE rotation_id = ? AND date = ?").run(

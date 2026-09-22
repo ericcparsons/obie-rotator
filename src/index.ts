@@ -12,6 +12,7 @@ import {
 import {
   getAnnotatedFiringDates,
   getRotationSkipDates,
+  getSkipDatesForRotations,
   removeRotationSkipDate,
   toDateString,
 } from "./holidays.js";
@@ -169,19 +170,32 @@ app.action("open_skip_date_global", async ({ ack, body, client }) => {
   const ownedRotations = listRotationsOwnedBy(body.user.id);
   if (ownedRotations.length === 0) return;
 
-  // Use today as the default date since there's no single rotation in context
   const today = new Date().toISOString().slice(0, 10);
-
-  // Pre-select all owned rotations
   const firstRotation = ownedRotations[0];
+
+  // Fetch existing skip dates across all owned rotations
+  const allSkips = getSkipDatesForRotations(ownedRotations.map((r) => r.id));
+  // Deduplicate by date+label so multi-rotation skips show once
+  const seen = new Set<string>();
+  const existingSkips = allSkips.filter((s) => {
+    const key = `${s.date}:${s.label}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Get channel from action body so we can refresh the list after saving
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const channel = (body as any).channel?.id ?? "";
 
   await client.views.open({
     trigger_id: (body as { trigger_id: string }).trigger_id,
     view: buildSkipDateModal({
       rotation: firstRotation,
       nextDate: today,
+      channel,
       ownedRotations: ownedRotations.map((r) => ({ id: r.id, name: r.name })),
-      existingSkips: [],
+      existingSkips,
       preSelectAll: true,
     }),
   });
