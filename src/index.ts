@@ -523,31 +523,19 @@ app.view("skip_date", async ({ ack, body, view }) => {
       ? selectedOptions.map((o) => parseInt(o.value, 10))
       : (defaultRotationIds ?? [rotationId ?? 0]).filter(Boolean);
 
-  console.log("[skip_date] private_metadata:", view.private_metadata);
-  console.log("[skip_date] selectedOptions:", JSON.stringify(selectedOptions));
-  console.log("[skip_date] defaultRotationIds:", defaultRotationIds);
-  console.log("[skip_date] targetRotationIds:", targetRotationIds);
-
   const stmt = db.prepare("INSERT OR REPLACE INTO skip_dates (date, rotation_id, label, emoji) VALUES (?, ?, ?, ?)");
 
-  // Insert every date in the range for each selected rotation
   for (const targetId of targetRotationIds) {
     const current = new Date(`${fromDate}T12:00:00Z`);
     const end = new Date(`${toDate}T12:00:00Z`);
     while (current <= end) {
-      const dateStr = current.toISOString().slice(0, 10);
-      try {
-        const result = stmt.run(dateStr, targetId, reason, emoji);
-        console.log(`[skip_date] Inserted rotation_id: ${targetId}, date: ${dateStr}, changes: ${result.changes}`);
-      } catch (err) {
-        console.error(`[skip_date] Insert FAILED rotation_id: ${targetId}, date: ${dateStr}:`, err);
-      }
+      stmt.run(current.toISOString().slice(0, 10), targetId, reason, emoji);
       current.setUTCDate(current.getUTCDate() + 1);
     }
   }
 
-  // Force DB flush to disk before responding
-  db.exec("PRAGMA wal_checkpoint(FULL)");
+  // Checkpoint WAL to main DB file so data survives a container restart
+  try { db.exec("PRAGMA wal_checkpoint(FULL)"); } catch { /* ignore */ }
 
   await refreshList(body.user.id, channel ?? "");
 });
@@ -605,12 +593,14 @@ app.action("remove_skip_date", async ({ ack, body, client }) => {
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 process.on("SIGTERM", () => {
-  console.log("Received SIGTERM — shutting down gracefully.");
+  console.log("Received SIGTERM — checkpointing WAL and shutting down.");
+  try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* ignore */ }
   process.exit(0);
 });
 
 process.on("SIGINT", () => {
-  console.log("Received SIGINT — shutting down gracefully.");
+  console.log("Received SIGINT — checkpointing WAL and shutting down.");
+  try { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch { /* ignore */ }
   process.exit(0);
 });
 

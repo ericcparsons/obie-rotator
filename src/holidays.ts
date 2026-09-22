@@ -59,6 +59,7 @@ export function getSkipDate(
     const specific = db
       .prepare("SELECT label, emoji FROM skip_dates WHERE date = ? AND rotation_id = ?")
       .get(dateStr, rotationId) as { label: string; emoji: string } | undefined;
+
     if (specific) return { ...specific, isHoliday: false };
   }
 
