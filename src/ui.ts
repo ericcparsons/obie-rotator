@@ -160,16 +160,16 @@ export function buildRotationList(
           // ── Primary actions ──────────────────────────────────────────
           {
             type: "button",
-            text: { type: "plain_text", text: "▶ Trigger now" },
+            text: { type: "plain_text", text: "📣 Post now" },
             action_id: "trigger_rotation",
             value: String(rotation.id),
             confirm: {
-              title: { type: "plain_text", text: "Trigger rotation?" },
+              title: { type: "plain_text", text: "Post rotation message?" },
               text: {
                 type: "mrkdwn",
-                text: `This will post the *${rotation.name}* message now and advance the queue.`,
+                text: `This will post the *${rotation.name}* message for ${currentMember ? `<@${currentMember.slack_user_id}>` : "the next person"} and advance the queue.\n\n_Use this if the rotation already fired but the person is out and you need to reassign._`,
               },
-              confirm: { type: "plain_text", text: "Trigger" },
+              confirm: { type: "plain_text", text: "Post" },
               deny: { type: "plain_text", text: "Cancel" },
             },
           },
@@ -193,13 +193,11 @@ export function buildRotationList(
                 value: `skip_date:${rotation.id}`,
               },
               {
-                text: { type: "plain_text", text: "⏭ Skip next person" },
+                text: { type: "plain_text", text: "⏭ Skip silently" },
                 value: `skip_person:${rotation.id}`,
                 description: {
                   type: "plain_text",
-                  text: currentMember
-                    ? `Advances past ${currentMember.slack_user_id} without posting`
-                    : "Advance queue without posting",
+                  text: "Advance the queue without posting — use when someone is OOO before the rotation fires",
                 },
               },
               {
