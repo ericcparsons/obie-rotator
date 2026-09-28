@@ -221,16 +221,31 @@ app.action("open_create_rotation", async ({ ack, body, client }) => {
 
 // ── Action: list rotations ────────────────────────────────────────────────────
 
-app.action("open_list_rotations", async ({ ack, body, respond }) => {
+app.action("open_list_rotations", async ({ ack, body, respond, client }) => {
   await ack();
   const rotations = listRotationsOwnedBy(body.user.id);
-  await respond({
-    response_type: "ephemeral",
-    replace_original: true,
-    text: "Rotations",
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const blocks = buildRotationList(rotations) as any;
+  try {
+    await respond({
+      response_type: "ephemeral",
+      replace_original: true,
+      text: "Rotations",
+      blocks,
+    });
+  } catch {
+    // response_url expired (>30 min since /rotation was typed) — post fresh ephemeral
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    blocks: buildRotationList(rotations) as any,
-  });
+    const channelId = (body as any).channel?.id;
+    if (channelId) {
+      await client.chat.postEphemeral({
+        channel: channelId,
+        user: body.user.id,
+        text: "Rotations",
+        blocks,
+      });
+    }
+  }
 });
 
 // ── Action: cadence changed — update modal fields live ────────────────────────
