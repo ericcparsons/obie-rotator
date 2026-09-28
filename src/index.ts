@@ -300,6 +300,24 @@ app.action("trigger_rotation", async ({ ack, body, respond }) => {
   await fireRotation(app, rotation);
 });
 
+// ── Action: skip silently ─────────────────────────────────────────────────────
+
+app.action("skip_rotation", async ({ ack, body, respond }) => {
+  await ack();
+
+  const rotationId = rotationIdFromAction(body as BlockButtonAction);
+  const rotation = getRotation(rotationId);
+  if (!rotation) return;
+
+  if (!isOwner(rotation, body.user.id)) {
+    await respond({ response_type: "ephemeral", text: "You're not an owner of this rotation." });
+    return;
+  }
+
+  advanceMember(rotationId);
+  await refreshList(body.user.id, (body as unknown as { channel?: { id?: string } }).channel?.id ?? "");
+});
+
 // ── Action: overflow menu ─────────────────────────────────────────────────────
 
 app.action("rotation_overflow", async ({ ack, body, client, respond }) => {
@@ -362,10 +380,6 @@ app.action("rotation_overflow", async ({ ack, body, client, respond }) => {
       trigger_id: b.trigger_id,
       view: buildSkipDateModal({ rotation, nextDate, channel, existingSkips, ownedRotations }),
     });
-
-  } else if (action === "skip_person") {
-    advanceMember(rotationId);
-    await refreshList(body.user.id, channel);
 
   } else if (action === "delete") {
     const name = rotation.name;

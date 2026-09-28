@@ -179,6 +179,21 @@ export function buildRotationList(
             action_id: "open_edit_rotation",
             value: String(rotation.id),
           },
+          {
+            type: "button",
+            text: { type: "plain_text", text: "⏭ Skip silently" },
+            action_id: "skip_rotation",
+            value: String(rotation.id),
+            confirm: {
+              title: { type: "plain_text", text: "Skip without posting?" },
+              text: {
+                type: "plain_text",
+                text: `Advances the queue past ${currentMember ? currentMember.slack_user_id : "the next person"} without sending a message. Use this before the rotation fires.`,
+              },
+              confirm: { type: "plain_text", text: "Skip" },
+              deny: { type: "plain_text", text: "Cancel" },
+            },
+          },
           // ── Overflow (secondary actions) ─────────────────────────────
           {
             type: "overflow",
@@ -191,14 +206,6 @@ export function buildRotationList(
               {
                 text: { type: "plain_text", text: "📅 Skip a date" },
                 value: `skip_date:${rotation.id}`,
-              },
-              {
-                text: { type: "plain_text", text: "⏭ Skip silently" },
-                value: `skip_person:${rotation.id}`,
-                description: {
-                  type: "plain_text",
-                  text: "Advance queue silently — for OOO before rotation fires",
-                },
               },
               {
                 text: { type: "plain_text", text: "🗑 Delete rotation" },
