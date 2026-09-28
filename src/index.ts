@@ -86,16 +86,15 @@ const app = new App({
 
 // ── /rotation command ─────────────────────────────────────────────────────────
 
-app.command("/rotation", async ({ ack, command, client }) => {
+app.command("/rotation", async ({ ack, command, respond }) => {
   await ack();
   const rotations = listRotationsOwnedBy(command.user_id);
-  await client.chat.postEphemeral({
-    channel: command.channel_id,
-    user: command.user_id,
+  await respond({
+    response_type: "ephemeral",
     text: "Rotations",
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     blocks: buildRotationList(rotations) as any,
-  });
+  } as RespondArguments);
 });
 
 // ── /rotation-status — show who's up next for this channel (visible to anyone) ─
