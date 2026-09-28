@@ -197,7 +197,7 @@ export function buildRotationList(
                 value: `skip_person:${rotation.id}`,
                 description: {
                   type: "plain_text",
-                  text: "Advance the queue without posting — use when someone is OOO before the rotation fires",
+                  text: "Advance queue silently — for OOO before rotation fires",
                 },
               },
               {
