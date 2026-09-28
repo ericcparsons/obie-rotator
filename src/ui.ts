@@ -199,15 +199,6 @@ export function buildRotationList(
                   type: "plain_text",
                   text: "Advance queue silently — for OOO before rotation fires",
                 },
-                confirm: {
-                  title: { type: "plain_text", text: "Skip without posting?" },
-                  text: {
-                    type: "plain_text",
-                    text: `Advances the queue past ${currentMember ? currentMember.slack_user_id : "the next person"} without sending a message. Use this before the rotation fires.`,
-                  },
-                  confirm: { type: "plain_text", text: "Skip" },
-                  deny: { type: "plain_text", text: "Cancel" },
-                },
               },
               {
                 text: { type: "plain_text", text: "🗑 Delete rotation" },
