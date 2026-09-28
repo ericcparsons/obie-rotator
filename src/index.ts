@@ -221,30 +221,17 @@ app.action("open_create_rotation", async ({ ack, body, client }) => {
 
 // ── Action: list rotations ────────────────────────────────────────────────────
 
-app.action("open_list_rotations", async ({ ack, body, client }) => {
+app.action("open_list_rotations", async ({ ack, body, respond }) => {
   await ack();
   const rotations = listRotationsOwnedBy(body.user.id);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const b = body as any;
-  // Try channel from action body, fall back to DM
-  const channelId: string = b.channel?.id ?? b.container?.channel_id ?? body.user.id;
-  try {
-    await client.chat.postEphemeral({
-      channel: channelId,
-      user: body.user.id,
-      text: "Rotations",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      blocks: buildRotationList(rotations) as any,
-    });
-  } catch {
-    // Channel not accessible — DM instead
-    await client.chat.postMessage({
-      channel: body.user.id,
-      text: "Rotations",
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      blocks: buildRotationList(rotations) as any,
-    });
-  }
+  await respond({
+    response_type: "ephemeral",
+    replace_original: false,
+    delete_original: false,
+    text: "Rotations",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    blocks: buildRotationList(rotations) as any,
+  });
 });
 
 // ── Action: cadence changed — update modal fields live ────────────────────────
