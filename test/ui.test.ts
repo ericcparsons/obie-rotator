@@ -121,6 +121,42 @@ describe('buildMainMenu', () => {
   });
 });
 
+describe('buildRotationList — Slack payload validation', () => {
+  it('overflow option descriptions are under 76 characters', () => {
+    const rotation = makeRotationWithMembers({ name: 'Standup' });
+    const blocks = buildRotationList([rotation]);
+    const json = JSON.stringify(blocks);
+    const parsed = JSON.parse(json);
+
+    // Find all overflow elements and check their option descriptions
+    const overflows = parsed.flatMap((b: any) =>
+      b.elements?.filter((e: any) => e.type === 'overflow') ?? []
+    );
+    for (const overflow of overflows) {
+      for (const option of overflow.options ?? []) {
+        if (option.description?.text) {
+          expect(option.description.text.length).toBeLessThanOrEqual(75);
+        }
+      }
+    }
+  });
+
+  it('overflow options do not have confirm objects', () => {
+    const rotation = makeRotationWithMembers({ name: 'Standup' });
+    const blocks = buildRotationList([rotation]);
+    const parsed = JSON.parse(JSON.stringify(blocks));
+
+    const overflows = parsed.flatMap((b: any) =>
+      b.elements?.filter((e: any) => e.type === 'overflow') ?? []
+    );
+    for (const overflow of overflows) {
+      for (const option of overflow.options ?? []) {
+        expect(option.confirm).toBeUndefined();
+      }
+    }
+  });
+});
+
 describe('buildRotationList', () => {
   it('includes open_create_rotation button', () => {
     const blocks = buildRotationList([makeRotationWithMembers()]);
