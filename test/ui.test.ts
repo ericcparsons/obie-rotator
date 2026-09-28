@@ -142,7 +142,7 @@ describe('buildRotationList', () => {
   it('includes trigger confirm text', () => {
     const blocks = buildRotationList([makeRotationWithMembers({ name: 'Standup' })]);
     const json = JSON.stringify(blocks);
-    expect(json).toContain('advance the queue');
+    expect(json).toContain('advances the queue');
   });
 
   it('shows create button even when list is empty', () => {

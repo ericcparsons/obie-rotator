@@ -166,8 +166,8 @@ export function buildRotationList(
             confirm: {
               title: { type: "plain_text", text: "Post rotation message?" },
               text: {
-                type: "mrkdwn",
-                text: `This will post the *${rotation.name}* message for ${currentMember ? `<@${currentMember.slack_user_id}>` : "the next person"} and advance the queue.\n\n_Use this if the rotation already fired but the person is out and you need to reassign._`,
+                type: "plain_text",
+                text: `Posts the ${rotation.name} message for ${currentMember ? currentMember.slack_user_id : "the next person"} and advances the queue. Use this when the rotation already fired but the person is out.`,
               },
               confirm: { type: "plain_text", text: "Post" },
               deny: { type: "plain_text", text: "Cancel" },
@@ -198,6 +198,15 @@ export function buildRotationList(
                 description: {
                   type: "plain_text",
                   text: "Advance queue silently — for OOO before rotation fires",
+                },
+                confirm: {
+                  title: { type: "plain_text", text: "Skip without posting?" },
+                  text: {
+                    type: "plain_text",
+                    text: `Advances the queue past ${currentMember ? currentMember.slack_user_id : "the next person"} without sending a message. Use this before the rotation fires.`,
+                  },
+                  confirm: { type: "plain_text", text: "Skip" },
+                  deny: { type: "plain_text", text: "Cancel" },
                 },
               },
               {
