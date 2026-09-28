@@ -23,7 +23,6 @@ import {
   fireRotation,
 } from "./scheduler.js";
 import {
-  buildMainMenu,
   buildRotationList,
   buildRotationModal,
   buildReorderModal,
@@ -87,13 +86,16 @@ const app = new App({
 
 // ── /rotation command ─────────────────────────────────────────────────────────
 
-app.command("/rotation", async ({ ack, respond }) => {
+app.command("/rotation", async ({ ack, command, client }) => {
   await ack();
-  await respond({
-    response_type: "ephemeral",
-    text: "Obie Rotator",
-    blocks: buildMainMenu(),
-  } as RespondArguments);
+  const rotations = listRotationsOwnedBy(command.user_id);
+  await client.chat.postEphemeral({
+    channel: command.channel_id,
+    user: command.user_id,
+    text: "Rotations",
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    blocks: buildRotationList(rotations) as any,
+  });
 });
 
 // ── /rotation-status — show who's up next for this channel (visible to anyone) ─
@@ -221,18 +223,7 @@ app.action("open_create_rotation", async ({ ack, body, client }) => {
 
 // ── Action: list rotations ────────────────────────────────────────────────────
 
-app.action("open_list_rotations", async ({ ack, body, respond }) => {
-  await ack();
-  const rotations = listRotationsOwnedBy(body.user.id);
-  await respond({
-    response_type: "ephemeral",
-    replace_original: false,
-    delete_original: false,
-    text: "Rotations",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    blocks: buildRotationList(rotations) as any,
-  });
-});
+
 
 // ── Action: cadence changed — update modal fields live ────────────────────────
 
