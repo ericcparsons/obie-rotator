@@ -107,8 +107,19 @@ export function buildRotationList(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "No rotations yet. Click *➕ Create rotation* to add one.",
+          text: "No rotations yet.",
         },
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "button",
+            text: { type: "plain_text", text: "➕ Create rotation" },
+            action_id: "open_create_rotation",
+            style: "primary",
+          },
+        ],
       },
     ];
   }
