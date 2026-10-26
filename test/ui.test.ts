@@ -181,10 +181,11 @@ describe('buildRotationList', () => {
     expect(json).toContain('advances the queue');
   });
 
-  it('shows create button even when list is empty', () => {
+  it('shows a clickable create button when list is empty', () => {
     const blocks = buildRotationList([]);
     const json = JSON.stringify(blocks);
-    expect(json).toContain('Create rotation');
+    // Must have the actual action_id, not just the text somewhere
+    expect(json).toContain('open_create_rotation');
   });
 });
 
